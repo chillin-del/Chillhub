@@ -1,0 +1,8 @@
+-- Forsaken Maintenance Script
+game:GetService("StarterGui"):SetCore("SendNotification", {
+    Title = "ChillHub",
+    Text = "Forsaken script is currently under maintenance! Please check back later.",
+    Duration = 5
+})
+ 
+print("[ChillHub] Forsaken is currently under maintenance.")
