@@ -1,0 +1,1748 @@
+------------------------------------------------------------
+-- EDIT ME
+------------------------------------------------------------
+local UPDATE_VERSION = "17"
+local UPDATE_NOTES   = "Fixed backdash macros, lock-on ragdoll, lethal dash settings, added ping delay per tech"
+
+------------------------------------------------------------
+-- SERVICES
+------------------------------------------------------------
+local RunService          = game:GetService("RunService")
+local Players             = game:GetService("Players")
+local Stats               = game:GetService("Stats")
+local UserInputService    = game:GetService("UserInputService")
+local Lighting            = game:GetService("Lighting")
+local TeleportService     = game:GetService("TeleportService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local VirtualUser         = game:GetService("VirtualUser")
+local HttpService         = game:GetService("HttpService")
+local StarterGui          = game:GetService("StarterGui")
+local ContextActionService= game:GetService("ContextActionService")
+
+local LocalPlayer   = Players.LocalPlayer
+local LOGO_ASSET_ID = "rbxassetid://83288538700579"
+local ACCENT        = Color3.fromRGB(255, 100, 0)
+local SITE_URL      = "https://chillhuboffical.netlify.app/"
+
+------------------------------------------------------------
+-- LOAD UI LIBRARY + ADDONS
+------------------------------------------------------------
+local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+local okLib, Library = pcall(function() return loadstring(game:HttpGet(repo.."Library.lua"))() end)
+if not okLib or not Library then error("[Chillhub] failed to load UI library: "..tostring(Library)) end
+local okTheme, ThemeManager = pcall(function() return loadstring(game:HttpGet(repo.."addons/ThemeManager.lua"))() end)
+local okSave,  SaveManager  = pcall(function() return loadstring(game:HttpGet(repo.."addons/SaveManager.lua"))()  end)
+
+local Options = Library.Options
+local Toggles = Library.Toggles
+
+------------------------------------------------------------
+-- LOADING SCREEN
+------------------------------------------------------------
+local Loading = Library:CreateLoading({ Title="Chillhub", Icon=LOGO_ASSET_ID, TotalSteps=4 })
+task.delay(90, function() pcall(function() Loading:Destroy() end) end)
+Loading:SetMessage("Loading Chillhub")
+Loading:SetDescription("i love you"); task.wait(1.5)
+Loading:SetCurrentStep(1); Loading:SetDescription("Loading ya save fileeee"); task.wait(1.5)
+Loading:SetCurrentStep(2); Loading:ShowSidebarPage(true)
+Loading.Sidebar:AddLabel("User: "..LocalPlayer.Name)
+Loading.Sidebar:AddLabel("Update "..(UPDATE_VERSION ~= "" and UPDATE_VERSION or "___")); task.wait(1.5)
+Loading:SetCurrentStep(3); Loading:SetDescription("Ready!"); task.wait(1.5)
+
+pcall(function() Library.AccentColor = Color3.fromRGB(255, 100, 0) end)
+
+------------------------------------------------------------
+-- HELPERS
+------------------------------------------------------------
+local unloaded   = false
+local connections  = {}
+local cleanupFns   = {}
+
+local function connect(signal, fn) local c=signal:Connect(fn); table.insert(connections,c); return c end
+local function onCleanup(fn) table.insert(cleanupFns, fn) end
+local function getHumanoid() local c=LocalPlayer.Character; return c and c:FindFirstChildOfClass("Humanoid") end
+local function getRoot()     local c=LocalPlayer.Character; return c and c:FindFirstChild("HumanoidRootPart") end
+
+-- waitMs: needed by macro helpers
+local function waitMs(ms) task.wait(ms / 1000) end
+
+local function isRagdolled(humanoid)
+    if not humanoid then return false end
+    -- Only treat as ragdolled if PlatformStand is true AND we aren't flying
+    if humanoid.PlatformStand and not (Toggles.Universal_Flying_Enabled and Toggles.Universal_Flying_Enabled.Value) then return true end
+    local s = humanoid:GetState()
+    return s == Enum.HumanoidStateType.Ragdoll
+        or s == Enum.HumanoidStateType.FallingDown
+        or s == Enum.HumanoidStateType.Physics
+end
+
+local Shared = { flinging=false, restoreNoclip=function() end, setTrackerVisible=function(_v) end }
+
+-- autoRotateLocks: only used by spin/attach — NOT by lock-on (that was the ragdoll bug)
+local autoRotateLocks = {}
+local function setAutoRotateLock(name, locked)
+    autoRotateLocks[name] = locked or nil
+    local h = getHumanoid()
+    if h then h.AutoRotate = (next(autoRotateLocks) == nil) end
+end
+connect(LocalPlayer.CharacterAdded, function(char)
+    local h = char:WaitForChild("Humanoid", 10)
+    if h then h.AutoRotate = (next(autoRotateLocks) == nil) end
+end)
+
+local function resolvePlayer(v)
+    if typeof(v) == "Instance" then return v end
+    if type(v) == "string" then return Players:FindFirstChild(v) end
+    return nil
+end
+
+local function playerLabel(plr)
+    if not plr then return "?" end
+    if plr.DisplayName ~= plr.Name then return plr.DisplayName.." ("..plr.Name..")" end
+    return plr.Name
+end
+
+local function keyFromOption(name)
+    local opt = Options[name]; if not opt then return nil end
+    return Enum.KeyCode:FromName(tostring(opt.Value))
+end
+
+local function inputMatchesBind(input, name)
+    local opt = Options[name]; if not opt then return false end
+    local v = tostring(opt.Value)
+    if v == "None" then return false end
+    if v == "MB1" then return input.UserInputType == Enum.UserInputType.MouseButton1 end
+    if v == "MB2" then return input.UserInputType == Enum.UserInputType.MouseButton2 end
+    if v == "MB3" then return input.UserInputType == Enum.UserInputType.MouseButton3 end
+    local kc = Enum.KeyCode:FromName(v)
+    return kc ~= nil and input.KeyCode == kc
+end
+
+local function fireKey(kc) VirtualInputManager:SendKeyEvent(true,kc,false,game); task.wait(); VirtualInputManager:SendKeyEvent(false,kc,false,game) end
+local function keyDown(kc) VirtualInputManager:SendKeyEvent(true, kc,false,game) end
+local function keyUp(kc)   VirtualInputManager:SendKeyEvent(false,kc,false,game) end
+local function clickDown()  VirtualInputManager:SendMouseButtonEvent(0,0,0,true, game,1) end
+local function clickUp()    VirtualInputManager:SendMouseButtonEvent(0,0,0,false,game,1) end
+local function clickMouse() clickDown(); task.wait(); clickUp() end
+
+local function copy(text)
+    if type(setclipboard) == "function" then setclipboard(text); return true end
+    return false
+end
+
+local function addGroup(tab, side, name, icon)
+    if tab.AddGroupbox then
+        local ok, box = pcall(function() return tab:AddGroupbox({Side=side,Name=name,IconName=icon}) end)
+        if ok and box then return box end
+    end
+    if side == "Left" then return tab:AddLeftGroupbox(name, icon) end
+    return tab:AddRightGroupbox(name, icon)
+end
+
+local function makeDraggable(frame, moveTarget)
+    moveTarget = moveTarget or frame; frame.Active = true
+    local dragging, dragStart, startPos = false, nil, nil
+    frame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true; dragStart = input.Position; startPos = moveTarget.Position
+            input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
+        end
+    end)
+    local c = connect(UserInputService.InputChanged, function(input)
+        if not dragging then return end
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            local delta = input.Position - dragStart
+            moveTarget.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset+delta.X, startPos.Y.Scale, startPos.Y.Offset+delta.Y)
+        end
+    end)
+    return function() c:Disconnect() end
+end
+
+------------------------------------------------------------
+-- BUILD UI
+------------------------------------------------------------
+local function buildUI()
+
+local Window = Library:CreateWindow({
+    Title         = "Chillhub TSB 🎃",
+    Footer        = "by ilovemygfhehe123",
+    ToggleKeybind = Enum.KeyCode.P,
+    Center        = true,
+    AutoShow      = true,
+    Icon          = LOGO_ASSET_ID,
+})
+
+local _menuLast = 0
+Library.ToggleCallback = function()
+    local now = os.clock(); if now - _menuLast < 0.3 then return false end; _menuLast = now; return true
+end
+
+pcall(function()
+    if okTheme and ThemeManager then
+        ThemeManager:SetLibrary(Library)
+        ThemeManager:ApplyTheme("Tokyo Night")
+        Library.AccentColor = Color3.fromRGB(255, 100, 0)
+    end
+end)
+
+local HomeTab      = Window:AddTab("Home",            "home")
+local VisualsTab   = Window:AddTab("Visuals",         "eye")
+local CombatTab    = Window:AddTab("Combat",          "swords")
+local MacrosTab    = Window:AddTab("Macros",          "keyboard")
+local FlingTab     = Window:AddTab("Fling",           "tornado")
+local PlayerTab    = Window:AddTab("Player",          "user")
+local FunTab       = Window:AddTab("Fun",             "party-popper")
+local LoaderTab    = Window:AddTab("Loader",          "download")
+local QoLTab       = Window:AddTab("Quality of Life", "sparkles")
+local SettingsTab  = Window:AddTab("Settings",        "settings")
+
+------------------------------------------------------------
+-- HOME TAB
+------------------------------------------------------------
+do
+    local HomeBox = addGroup(HomeTab, "Left", "Home Options", "home")
+    HomeBox:AddLabel("owner, ilovemygfhehe123 :3 🎃")
+    HomeBox:AddButton({ Text="Join Discord", Func=function() copy("Discord.gg/Nf8GNVYGF"); Library:Notify("Discord invite copied!",5) end })
+    HomeBox:AddButton({ Text="Youtube",      Func=function() copy("https://www.youtube.com/@Chillhubofficalchannel"); Library:Notify("Youtube link copied!",5) end })
+    HomeBox:AddButton({ Text="Tiktok",       Func=function() copy("https://www.tiktok.com/@justachillguywithagf"); Library:Notify("Tiktok link copied!",5) end })
+    HomeBox:AddButton({ Text="Roblox",       Func=function() copy("https://www.roblox.com/users/11725638566/profile"); Library:Notify("Roblox profile link copied!",5) end })
+    HomeBox:AddButton({ Text="Website", Func=function()
+        if copy(SITE_URL) then Library:Notify("Website link copied!",3)
+        else Library:Notify("Clipboard not supported by your executor",4) end
+    end })
+
+    local UpdateBox = addGroup(HomeTab, "Left", "Update "..(UPDATE_VERSION~="" and UPDATE_VERSION or "___"), "megaphone")
+    UpdateBox:AddLabel({ Text=UPDATE_NOTES~="" and UPDATE_NOTES or "Update notes go here.", DoesWrap=true })
+
+    local KeysBox = addGroup(HomeTab, "Right", "Default Keybinds", "keyboard")
+    local function addKeybind(label, id, default)
+        KeysBox:AddLabel(label):AddKeyPicker(id, { Default=default, NoUI=true, Mode="Toggle", Text=label })
+    end
+    KeysBox:AddLabel("Open / Close Menu"):AddKeyPicker("MenuKeybind", { Default="P", NoUI=true, Text="Open / Close Menu" })
+    Library.ToggleKeybind = Options.MenuKeybind
+    addKeybind("Fly Up",                        "Keybind_FlyUp",     "Space")
+    addKeybind("Fly Down",                       "Keybind_FlyDown",   "LeftControl")
+    addKeybind("Backdash 1",                     "Macro_Backdash1_Key","Z")
+    addKeybind("Backdash 2",                     "Macro_Backdash2_Key","X")
+    addKeybind("Backdash 3",                     "Macro_Backdash3_Key","C")
+    addKeybind("Backdash 4",                     "Macro_Backdash4_Key","V")
+    addKeybind("Safezone (go / return)",         "Combat_Safezone_Key","N")
+    addKeybind("Game Dash Key (Faster Dashes)",  "Keybind_GameDash",  "Q")
+    addKeybind("Lock-On (toggle)",               "LockOn_Key",        "T")
+
+    local RejoinBox = addGroup(HomeTab, "Right", "Rejoin", "refresh-cw")
+    local function doRejoin()
+        local ok,err = pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId,game.JobId,LocalPlayer) end)
+        if not ok then warn("[Rejoin]",err); pcall(function() TeleportService:Teleport(game.PlaceId,LocalPlayer) end) end
+    end
+    RejoinBox:AddToggle("AutoRejoin_Enabled", { Text="Auto Rejoin", Default=false })
+    RejoinBox:AddSlider("AutoRejoin_Minutes",  { Text="Interval", Min=1, Max=60, Default=19, Rounding=0, Suffix=" min" })
+    RejoinBox:AddButton({ Text="Rejoin Now", Func=doRejoin })
+    task.spawn(function()
+        local elapsed = 0
+        while not unloaded do
+            task.wait(1)
+            if Toggles.AutoRejoin_Enabled.Value then
+                elapsed += 1
+                if elapsed >= Options.AutoRejoin_Minutes.Value * 60 then elapsed = 0; doRejoin() end
+            else elapsed = 0 end
+        end
+    end)
+end
+
+------------------------------------------------------------
+-- VISUALS TAB
+------------------------------------------------------------
+do
+    -- HUD
+    local HudBox = addGroup(VisualsTab, "Left", "HUD (drag to move)", "monitor")
+    local hudGui = Instance.new("ScreenGui"); hudGui.Name="ChillHUD"; hudGui.ResetOnSpawn=false; hudGui.Parent=LocalPlayer:WaitForChild("PlayerGui")
+    onCleanup(function() hudGui:Destroy() end)
+    local entries = {}
+    local function makeHudLabel(text, y, width)
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.fromOffset(width,26); label.Position = UDim2.fromOffset(10,y)
+        label.BackgroundColor3 = Color3.new(0,0,0); label.BackgroundTransparency = 0.4
+        label.TextColor3 = Color3.new(1,1,1); label.Font = Enum.Font.GothamBold; label.TextSize = 16
+        label.Text = text; label.Visible = false; label.Parent = hudGui
+        Instance.new("UICorner",label).CornerRadius = UDim.new(0,6)
+        makeDraggable(label); table.insert(entries,{label=label,width=width}); return label
+    end
+    local fpsLabel  = makeHudLabel("FPS: --",          10, 110)
+    local pingLabel = makeHudLabel("Ping: --",          42, 140)
+    local posLabel  = makeHudLabel("X: 0  Y: 0  Z: 0", 74, 220)
+    HudBox:AddToggle("FPS_Display",    { Text="FPS Display",         Default=false, Callback=function(v) fpsLabel.Visible=v  end })
+    HudBox:AddToggle("Display_Ping",   { Text="Ping Display",        Default=false, Callback=function(v) pingLabel.Visible=v end })
+    HudBox:AddToggle("HUD_Coordinates",{ Text="Coordinates Display", Default=false, Callback=function(v) posLabel.Visible=v  end })
+    HudBox:AddSlider("HUD_TextSize",   { Text="HUD Text Size", Min=12, Max=28, Default=16, Rounding=0,
+        Callback=function(v) for _,e in entries do e.label.TextSize=v; e.label.Size=UDim2.fromOffset(e.width*(v/16),v+10) end end })
+    local frames=0; local elapsed2=0
+    connect(RunService.RenderStepped, function(dt)
+        if not fpsLabel.Visible then return end
+        frames+=1; elapsed2+=dt
+        if elapsed2>=0.5 then fpsLabel.Text="FPS: "..math.round(frames/elapsed2); frames=0; elapsed2=0 end
+    end)
+    local slowTimer=0
+    connect(RunService.Heartbeat, function(dt)
+        slowTimer+=dt; if slowTimer<0.25 then return end; slowTimer=0
+        if pingLabel.Visible then
+            local ok,ping = pcall(function() return Stats.Network.ServerStatsItem["Data Ping"]:GetValue() end)
+            if ok then pingLabel.Text="Ping: "..math.floor(ping).." ms" end
+        end
+        if posLabel.Visible then
+            local root = getRoot()
+            if root then local p=root.Position; posLabel.Text=("X: %d  Y: %d  Z: %d"):format(math.floor(p.X),math.floor(p.Y),math.floor(p.Z)) end
+        end
+    end)
+
+    -- Custom Aurora
+    local AuroraBox = addGroup(VisualsTab, "Left", "Custom Aurora Editor", "sparkles")
+    AuroraBox:AddToggle("Aurora_Custom_Enabled", { Text="Custom Aurora & Atmosphere", Default=false })
+    AuroraBox:AddSlider("Aurora_Brightness",     { Text="Sky Brightness",   Min=0, Max=5,  Default=2, Rounding=1 })
+    AuroraBox:AddSlider("Aurora_Haze",           { Text="Atmosphere Haze",  Min=0, Max=10, Default=2, Rounding=1 })
+    AuroraBox:AddSlider("Aurora_Glare",          { Text="Atmosphere Glare", Min=0, Max=10, Default=2, Rounding=1 })
+    AuroraBox:AddToggle("Aurora_RainbowShift",   { Text="Aurora Color Cycle", Default=false }):AddColorPicker("Aurora_CustomColor", { Default=Color3.fromRGB(0,255,180), Title="Aurora Color" })
+    local origBrightness = Lighting.Brightness; local customAtmosphere = nil
+    connect(RunService.Heartbeat, function()
+        if not Toggles.Aurora_Custom_Enabled.Value then
+            if customAtmosphere then customAtmosphere:Destroy(); customAtmosphere=nil; Lighting.Brightness=origBrightness end; return
+        end
+        if not customAtmosphere then
+            origBrightness = Lighting.Brightness
+            customAtmosphere = Lighting:FindFirstChildOfClass("Atmosphere") or Instance.new("Atmosphere")
+            customAtmosphere.Parent = Lighting
+        end
+        Lighting.Brightness = Options.Aurora_Brightness.Value
+        customAtmosphere.Haze  = Options.Aurora_Haze.Value
+        customAtmosphere.Glare = Options.Aurora_Glare.Value
+        if Toggles.Aurora_RainbowShift.Value then
+            local col = Color3.fromHSV((os.clock()*0.1)%1, 0.9, 1)
+            customAtmosphere.Color = col; customAtmosphere.Decay = col
+        else
+            local col = Options.Aurora_CustomColor.Value
+            customAtmosphere.Color = col; customAtmosphere.Decay = col
+        end
+    end)
+
+    -- Performance
+    local PerfBox = addGroup(VisualsTab, "Left", "Performance & Visibility", "gauge")
+    local GREY_SKY = "rbxasset://textures/grey.png"
+    local origShadows=Lighting.GlobalShadows; local origSky=Lighting:FindFirstChildOfClass("Sky"); local skyClone=origSky and origSky:Clone()
+    local greySky=nil; local lowQOn=false; local disEff={}; local disFx={}
+    local function isFx(o) return (o:IsA("ParticleEmitter") or o:IsA("Trail") or o:IsA("Beam")) and o.Name~="ChillTrail" end
+    local function applyGreySky()
+        if not greySky then greySky=Instance.new("Sky"); greySky.Name="LQGreySky"; for _,f in {"Bk","Dn","Ft","Lf","Rt","Up"} do greySky["Skybox"..f]=GREY_SKY end end
+        local cur=Lighting:FindFirstChildOfClass("Sky"); if cur and cur~=greySky then cur:Destroy() end; greySky.Parent=Lighting
+    end
+    local function setLowQuality(on)
+        lowQOn = on
+        if on then Lighting.GlobalShadows=false; applyGreySky()
+        else Lighting.GlobalShadows=origShadows; if greySky then greySky.Parent=nil end; if skyClone and not Lighting:FindFirstChildOfClass("Sky") then skyClone:Clone().Parent=Lighting end end
+        for _,e in Lighting:GetChildren() do if e:IsA("PostEffect") then if on then if e.Enabled then disEff[e]=true; e.Enabled=false end elseif disEff[e] then e.Enabled=true; disEff[e]=nil end end end
+        for _,o in workspace:GetDescendants() do if isFx(o) then if on then if o.Enabled then disFx[o]=true; o.Enabled=false end elseif disFx[o] then o.Enabled=true; disFx[o]=nil end end end
+    end
+    connect(workspace.DescendantAdded, function(o) if lowQOn and isFx(o) then task.defer(function() if o.Enabled then o.Enabled=false end end) end end)
+    PerfBox:AddToggle("LowQuality_Enabled", { Text="Low Quality", Default=false, Callback=setLowQuality })
+    local savedLighting = nil
+    PerfBox:AddToggle("Fullbright_Enabled", { Text="Fullbright", Default=false, Callback=function(on)
+        if on then
+            savedLighting={Brightness=Lighting.Brightness,ClockTime=Lighting.ClockTime,Ambient=Lighting.Ambient,OutdoorAmbient=Lighting.OutdoorAmbient,FogEnd=Lighting.FogEnd,GlobalShadows=Lighting.GlobalShadows}
+            Lighting.Brightness=2; Lighting.ClockTime=14; Lighting.Ambient=Color3.new(1,1,1); Lighting.OutdoorAmbient=Color3.new(1,1,1); Lighting.FogEnd=100000; Lighting.GlobalShadows=false
+        elseif savedLighting then for k,v in savedLighting do Lighting[k]=v end; savedLighting=nil end
+    end })
+    PerfBox:AddToggle("FOV_Enabled", { Text="Custom FOV", Default=false })
+    PerfBox:AddSlider("FOV_Value",   { Text="FOV", Min=70, Max=120, Default=80, Rounding=0 })
+    connect(RunService.RenderStepped, function()
+        if not Toggles.FOV_Enabled.Value then return end
+        local cam=workspace.CurrentCamera; local fov=Options.FOV_Value.Value
+        if cam and cam.FieldOfView~=fov then cam.FieldOfView=fov end
+    end)
+
+    -- Extreme Low Quality
+    local ExtremeBox = addGroup(VisualsTab, "Left", "Extreme Low Quality", "zap")
+    local GREY_MAT_COLOR = Color3.fromRGB(140,140,140); local extremeApplied=false
+    local function applyExtremeLowQuality()
+        if extremeApplied then return end; extremeApplied=true
+        applyGreySky(); pcall(function() Lighting.Technology=Enum.Technology.Compatibility end); Lighting.GlobalShadows=false
+        for _,obj in workspace:GetDescendants() do pcall(function()
+            if obj:IsA("BasePart") then obj.Material=Enum.Material.SmoothPlastic; obj.Color=GREY_MAT_COLOR; obj.Reflectance=0
+            elseif obj:IsA("Decal") or obj:IsA("Texture") then obj.Transparency=1
+            elseif obj:IsA("SpecialMesh") then obj.TextureId=""
+            elseif obj:IsA("SurfaceAppearance") then obj.Parent=nil
+            elseif isFx(obj) then obj.Enabled=false end
+        end) end
+        if type(setfflag)=="function" then pcall(function() setfflag("FIntDebugTextureManagerSkipMips","8") end) end
+    end
+    local BOOST_GREY=Color3.fromRGB(85,85,85); local boostApplied=false
+    local function inCharacter(obj) local model=obj:FindFirstAncestorWhichIsA("Model"); while model do if model:FindFirstChildOfClass("Humanoid") then return true end; model=model:FindFirstAncestorWhichIsA("Model") end; return false end
+    local function stripEffect(obj)
+        if obj:IsA("ParticleEmitter") or obj:IsA("Smoke") or obj:IsA("Fire") or obj:IsA("Sparkles") then obj:Destroy(); return true
+        elseif (obj:IsA("Trail") or obj:IsA("Beam")) and obj.Name~="ChillTrail" then obj.Enabled=false; return true
+        elseif obj:IsA("PointLight") or obj:IsA("SpotLight") or obj:IsA("SurfaceLight") then obj.Enabled=false; return true end
+        return false
+    end
+    local function boostMapObject(obj)
+        if obj:IsA("Terrain") then return end
+        if obj:IsA("BasePart") then
+            obj.Material=Enum.Material.SmoothPlastic; obj.Reflectance=0; obj.CastShadow=false; obj.Color=BOOST_GREY
+            if obj:IsA("MeshPart") then obj.TextureID=""; obj.RenderFidelity=Enum.RenderFidelity.Performance end
+            if (obj:IsA("MeshPart") or obj:IsA("UnionOperation")) and obj.Anchored and obj.Size.Magnitude<60 then obj.LocalTransparencyModifier=1 end
+        elseif obj:IsA("Decal") or obj:IsA("Texture") or obj:IsA("SurfaceAppearance") then obj:Destroy()
+        elseif obj:IsA("SpecialMesh") then obj.TextureId="" end
+    end
+    local function applyMassiveBoost()
+        if boostApplied then Library:Notify("Massive FPS Boost is already applied",4); return end; boostApplied=true
+        pcall(function() Lighting.GlobalShadows=false; Lighting.Technology=Enum.Technology.Compatibility end)
+        for _,child in Lighting:GetChildren() do if child:IsA("PostEffect") or child:IsA("Atmosphere") then pcall(function() child:Destroy() end) end end
+        pcall(function()
+            local terrain=workspace:FindFirstChildOfClass("Terrain")
+            if terrain then terrain.Decoration=false; terrain.WaterWaveSize=0; terrain.WaterWaveSpeed=0; terrain.WaterReflectance=0; terrain.WaterTransparency=0
+                local clouds=terrain:FindFirstChildOfClass("Clouds"); if clouds then clouds:Destroy() end
+            end
+        end)
+        pcall(function() settings().Rendering.QualityLevel=Enum.QualityLevel.Level01 end)
+        if type(setfflag)=="function" then pcall(function() setfflag("FIntDebugTextureManagerSkipMips","8") end) end
+        local count=0
+        for _,obj in workspace:GetDescendants() do
+            pcall(function() if not stripEffect(obj) and not inCharacter(obj) then boostMapObject(obj) end end)
+            count+=1; if count%1500==0 then task.wait() end
+        end
+        Library:Notify("Massive FPS Boost applied, rejoin to undo.",6)
+    end
+    connect(workspace.DescendantAdded, function(obj)
+        if not boostApplied then return end
+        task.defer(function() pcall(function()
+            if not stripEffect(obj) then
+                if (obj:IsA("Decal") or obj:IsA("Texture") or obj:IsA("SurfaceAppearance")) and not inCharacter(obj) then obj:Destroy() end
+            end
+        end) end)
+    end)
+    local extremeButton=ExtremeBox:AddButton({ Text="Extreme Low Quality", Func=function()
+        Library:Notify("Drastic visual change incoming, rejoin to undo. Applying in 4s...",5)
+        task.delay(4,function() if unloaded then return end; applyExtremeLowQuality(); Library:Notify("Extreme Low Quality applied. Rejoin to undo.",5) end)
+    end })
+    extremeButton:AddButton({ Text="Massive FPS Boost", Func=function()
+        Library:Notify("Applying Massive FPS Boost, this may freeze for a second...",4); task.spawn(applyMassiveBoost)
+    end })
+
+    -- ESP
+    local ESPBox = addGroup(VisualsTab, "Right", "Player ESP", "eye")
+    ESPBox:AddToggle("ESP_Enabled",        { Text="Player ESP",     Default=true  })
+    ESPBox:AddToggle("ESP_Fill_Enabled",   { Text="ESP Fill",       Default=true  }):AddColorPicker("ESP_Fill_Color",   { Default=Color3.fromRGB(255,100,0), Title="ESP Fill Color"    })
+    ESPBox:AddToggle("ESP_Outline_Enabled",{ Text="ESP Outline",    Default=true  }):AddColorPicker("ESP_Outline_Color",{ Default=Color3.fromRGB(255,100,0), Title="ESP Outline Color"  })
+    ESPBox:AddToggle("ESP_HealthColor",    { Text="Color By Health",Default=false })
+    ESPBox:AddToggle("ESP_Names",    { Text="Names",    Default=false })
+    ESPBox:AddToggle("ESP_Health",   { Text="Health",   Default=false })
+    ESPBox:AddToggle("ESP_Distance", { Text="Distance", Default=false })
+    local espHL={}; local infoBB={}
+    local function removeHL(plr)   local h=espHL[plr];  if h then h:Destroy();     espHL[plr]=nil  end end
+    local function removeInfo(plr) local b=infoBB[plr]; if b then b.gui:Destroy(); infoBB[plr]=nil end end
+    local function updateHL(plr)
+        local char=plr.Character
+        if plr==LocalPlayer or not Toggles.ESP_Enabled.Value or not char then removeHL(plr); return end
+        local hum=char:FindFirstChildOfClass("Humanoid"); if not hum then removeHL(plr); return end
+        local h=espHL[plr]
+        if not h or not h.Parent or h.Adornee~=char then
+            if h then h:Destroy() end
+            h=Instance.new("Highlight"); h.Name="ChillESP"; h.DepthMode=Enum.HighlightDepthMode.AlwaysOnTop; h.Adornee=char; h.Parent=char; espHL[plr]=h
+        end
+        local fc=Options.ESP_Fill_Color.Value; local oc=Options.ESP_Outline_Color.Value
+        if Toggles.ESP_HealthColor.Value and hum.MaxHealth>0 then
+            local r=math.clamp(hum.Health/hum.MaxHealth,0,1); fc=Color3.fromHSV(r*0.33,1,1); oc=fc
+        end
+        h.FillColor=fc;    h.FillTransparency=Toggles.ESP_Fill_Enabled.Value and 0.75 or 1
+        h.OutlineColor=oc; h.OutlineTransparency=Toggles.ESP_Outline_Enabled.Value and 0 or 1
+    end
+    local function updateInfo(plr)
+        local char=plr.Character; local head=char and char:FindFirstChild("Head"); local hum=char and char:FindFirstChildOfClass("Humanoid")
+        local wN=Toggles.ESP_Names.Value; local wH=Toggles.ESP_Health.Value; local wD=Toggles.ESP_Distance.Value
+        if plr==LocalPlayer or not head or not hum or not(wN or wH or wD) then removeInfo(plr); return end
+        local board=infoBB[plr]
+        if not board or not board.gui.Parent then
+            if board then board.gui:Destroy() end
+            local gui=Instance.new("BillboardGui"); gui.Name="ChillInfoESP"; gui.Size=UDim2.fromOffset(200,60); gui.StudsOffset=Vector3.new(0,3,0); gui.AlwaysOnTop=true; gui.Adornee=head; gui.Parent=head
+            local lbl=Instance.new("TextLabel"); lbl.Size=UDim2.fromScale(1,1); lbl.BackgroundTransparency=1; lbl.TextColor3=Color3.new(1,1,1); lbl.TextStrokeTransparency=0; lbl.Font=Enum.Font.GothamBold; lbl.TextSize=13; lbl.Parent=gui
+            board={gui=gui,label=lbl}; infoBB[plr]=board
+        end
+        local lines={}
+        if wN then table.insert(lines, playerLabel(plr)) end
+        if wH then table.insert(lines, ("HP: %d/%d"):format(math.floor(hum.Health),math.floor(hum.MaxHealth))) end
+        if wD then local myRoot=getRoot(); if myRoot then table.insert(lines, ("%d studs"):format(math.floor((myRoot.Position-head.Position).Magnitude))) end end
+        board.label.Text = table.concat(lines,"\n")
+    end
+    local function hookPlayer(plr)
+        if plr==LocalPlayer then return end
+        if plr.Character then task.spawn(function() task.wait(0.5); pcall(function() updateHL(plr) end) end) end
+        connect(plr.CharacterAdded, function() task.wait(0.5); pcall(function() updateHL(plr) end) end)
+    end
+    for _,p in Players:GetPlayers() do hookPlayer(p) end
+    connect(Players.PlayerAdded,   hookPlayer)
+    connect(Players.PlayerRemoving,function(p) removeHL(p); removeInfo(p) end)
+    task.spawn(function()
+        while not unloaded do
+            for _,p in Players:GetPlayers() do if p~=LocalPlayer then pcall(function() updateHL(p); updateInfo(p) end) end end
+            task.wait(0.25)
+        end
+    end)
+    onCleanup(function() for p in espHL do removeHL(p) end; for p in infoBB do removeInfo(p) end end)
+
+    -- World & Camera
+    local WorldBox = addGroup(VisualsTab, "Left", "World & Camera", "globe")
+    local xrayOn=false; local xrayParts={}; local xrayGen=0
+    local function belongsToChar(o) local m=o:FindFirstAncestorWhichIsA("Model"); while m do if m:FindFirstChildOfClass("Humanoid") then return true end; m=m:FindFirstAncestorWhichIsA("Model") end; return false end
+    local function xrayVal() return ((Options.XRay_Transparency and Options.XRay_Transparency.Value) or 60)/100 end
+    local function applyXray(o,v) if o:IsA("BasePart") and not o:IsA("Terrain") and not belongsToChar(o) then if xrayParts[o]==nil then xrayParts[o]=o.LocalTransparencyModifier end; o.LocalTransparencyModifier=v end end
+    local function restoreXray() for part,orig in xrayParts do if part.Parent then part.LocalTransparencyModifier=orig end; xrayParts[part]=nil end end
+    local function refreshXray()
+        xrayGen+=1; local gen=xrayGen; if not xrayOn then restoreXray(); return end
+        local v=xrayVal(); for part in xrayParts do if part.Parent then part.LocalTransparencyModifier=v else xrayParts[part]=nil end end
+        local count=0; for _,o in workspace:GetDescendants() do if gen~=xrayGen then return end; applyXray(o,v); count+=1; if count%1500==0 then task.wait() end end
+    end
+    connect(workspace.DescendantAdded, function(o) if xrayOn then task.defer(function() if xrayOn then applyXray(o,xrayVal()) end end) end end)
+    WorldBox:AddToggle("XRay_Enabled",      { Text="X-Ray", Default=false, Callback=function(v) xrayOn=v; task.spawn(refreshXray) end })
+    WorldBox:AddSlider("XRay_Transparency", { Text="X-Ray Transparency", Min=10, Max=95, Default=60, Rounding=0, Suffix="%", Callback=function() if xrayOn then task.spawn(refreshXray) end end })
+    local defMax=LocalPlayer.CameraMaxZoomDistance; local defMin=LocalPlayer.CameraMinZoomDistance
+    WorldBox:AddToggle("Camera_UnlockZoom", { Text="Unlock Camera Zoom", Default=false, Callback=function(v)
+        if v then LocalPlayer.CameraMaxZoomDistance=10000; LocalPlayer.CameraMinZoomDistance=0.5
+        else LocalPlayer.CameraMaxZoomDistance=defMax; LocalPlayer.CameraMinZoomDistance=defMin end
+    end })
+    onCleanup(function() xrayOn=false; refreshXray() end)
+end
+
+------------------------------------------------------------
+-- COMBAT TAB
+------------------------------------------------------------
+do
+    -- Auto Safezone
+    local SafeBox     = addGroup(CombatTab, "Left",  "Auto Safezone",    "shield")
+    local SafeControls= addGroup(CombatTab, "Right", "Safezone Controls","navigation")
+    SafeBox:AddToggle("Combat_Safezone_Enabled",     { Text="Auto Safezone",                    Default=false })
+    SafeBox:AddSlider("Combat_Safezone_Health",      { Text="Trigger At Health", Min=5,   Max=95,   Default=50,  Rounding=0, Suffix="%" })
+    SafeBox:AddSlider("Combat_Safezone_Height",      { Text="Safezone Height",   Min=100, Max=3000, Default=500, Rounding=0, Suffix=" studs" })
+    SafeBox:AddSlider("Combat_Safezone_Size",        { Text="Platform Size",     Min=60,  Max=800,  Default=400, Rounding=0, Suffix=" studs" })
+    SafeBox:AddToggle("Combat_Safezone_Walls",       { Text="Edge Walls",        Default=true })
+    SafeBox:AddSlider("Combat_Safezone_ReturnTime",  { Text="Auto Return After (0=stay)", Min=0, Max=120, Default=0, Rounding=0, Suffix="s" })
+
+    local PLAT_THICK=4; local WALL_H=60; local safezone=nil; local lastHealth=nil; local healthConn=nil
+    local function makePart(cont,name,size,cf,trans) local p=Instance.new("Part"); p.Name=name; p.Anchored=true; p.CanCollide=true; p.CastShadow=false; p.Material=Enum.Material.ForceField; p.Color=ACCENT; p.Transparency=trans; p.Size=size; p.CFrame=cf; p.Parent=cont; return p end
+    local function destroySafezone() if safezone then local d=safezone; safezone=nil; if d.container then d.container:Destroy() end end end
+    local function leaveSafezone()
+        if not safezone then return end
+        local d=safezone; destroySafezone()
+        local root=getRoot()
+        if root and d.returnCFrame then root.AssemblyLinearVelocity=Vector3.zero; root.CFrame=d.returnCFrame end
+    end
+    local function enterSafezone()
+        if safezone then return end; local root=getRoot(); if not root then return end
+        local retCF=root.CFrame; local sz=Options.Combat_Safezone_Size.Value
+        local center=retCF.Position+Vector3.new(0,Options.Combat_Safezone_Height.Value,0)
+        local cont=Instance.new("Folder"); cont.Name="ChillSafezone"
+        makePart(cont,"Platform",Vector3.new(sz,PLAT_THICK,sz),CFrame.new(center),0.5)
+        if Toggles.Combat_Safezone_Walls.Value then
+            local half=sz/2; local wc=center+Vector3.new(0,PLAT_THICK/2+WALL_H/2,0)
+            makePart(cont,"WallN",Vector3.new(sz,WALL_H,2),CFrame.new(wc+Vector3.new(0,0,half)),0.9)
+            makePart(cont,"WallS",Vector3.new(sz,WALL_H,2),CFrame.new(wc-Vector3.new(0,0,half)),0.9)
+            makePart(cont,"WallE",Vector3.new(2,WALL_H,sz),CFrame.new(wc+Vector3.new(half,0,0)),0.9)
+            makePart(cont,"WallW",Vector3.new(2,WALL_H,sz),CFrame.new(wc-Vector3.new(half,0,0)),0.9)
+        end
+        cont.Parent=workspace
+        safezone={container=cont,center=center,size=sz,returnCFrame=retCF}
+        root.AssemblyLinearVelocity=Vector3.zero; root.CFrame=CFrame.new(center+Vector3.new(0,PLAT_THICK/2+4,0))
+        Library:Notify("Safezone activated",3)
+        local delay=Options.Combat_Safezone_ReturnTime.Value
+        if delay>0 then task.delay(delay,function() if safezone then leaveSafezone() end end) end
+    end
+    connect(RunService.Heartbeat,function()
+        local d=safezone; if not d then return end; local root=getRoot(); if not root then return end
+        local rel=root.Position-d.center; local lim=d.size/2+4
+        if rel.Y<-8 or math.abs(rel.X)>lim or math.abs(rel.Z)>lim then root.AssemblyLinearVelocity=Vector3.zero; root.CFrame=CFrame.new(d.center+Vector3.new(0,PLAT_THICK/2+4,0)) end
+    end)
+    local function watchChar(char)
+        local hum=char:WaitForChild("Humanoid",10); if not hum then return end
+        if healthConn then healthConn:Disconnect() end
+        lastHealth=hum.Health
+        healthConn=hum.HealthChanged:Connect(function(health)
+            local took=lastHealth~=nil and health<lastHealth; lastHealth=health
+            if not took or health<=0 then return end
+            if not Toggles.Combat_Safezone_Enabled.Value or safezone then return end
+            if health<=hum.MaxHealth*(Options.Combat_Safezone_Health.Value/100) then enterSafezone() end
+        end)
+    end
+    SafeControls:AddButton({ Text="Go To Safezone Now", Func=enterSafezone })
+    SafeControls:AddButton({ Text="Return To Ground",    Func=leaveSafezone })
+    SafeControls:AddLabel({ Text="Safezone key set in Home tab (default N).", DoesWrap=true })
+    connect(UserInputService.InputBegan,function(input,processed)
+        if processed then return end
+        local key=keyFromOption("Combat_Safezone_Key")
+        if key and input.KeyCode==key then if safezone then leaveSafezone() else enterSafezone() end end
+    end)
+    connect(LocalPlayer.CharacterAdded,function(char) destroySafezone(); watchChar(char) end)
+    if LocalPlayer.Character then task.spawn(watchChar,LocalPlayer.Character) end
+    onCleanup(function() if healthConn then healthConn:Disconnect() end; destroySafezone() end)
+
+    -- Faster Dashes
+    local DashBox = addGroup(CombatTab, "Left", "Faster Dashes", "move-horizontal")
+    DashBox:AddToggle("Dash_Enabled",  { Text="Faster Dashes", Default=false })
+    DashBox:AddInput("Dash_SideBoost", { Text="Side Boost (studs/s)",  Default="40",  Numeric=true, Finished=false, Placeholder="0-300" })
+    DashBox:AddInput("Dash_FrontBoost",{ Text="Front Boost (studs/s)", Default="25",  Numeric=true, Finished=false, Placeholder="0-300" })
+    DashBox:AddInput("Dash_BackBoost", { Text="Back Boost (studs/s)",  Default="25",  Numeric=true, Finished=false, Placeholder="0-300" })
+    DashBox:AddInput("Dash_Duration",  { Text="Boost Duration (ms)",   Default="250", Numeric=true, Finished=false, Placeholder="50-2000" })
+    DashBox:AddToggle("Dash_Tracker",  { Text="Dash Cooldown Tracker (drag)", Default=false, Callback=function(v) Shared.setTrackerVisible(v) end })
+
+    local SIDE_CD=2; local FB_CD=5; local cooldowns={side=0,frontBack=0}; local dashing=nil
+    local trackerGui=Instance.new("ScreenGui"); trackerGui.Name="ChillDashTracker"; trackerGui.ResetOnSpawn=false; trackerGui.Enabled=false; trackerGui.Parent=LocalPlayer:WaitForChild("PlayerGui")
+    local trackerLabel=Instance.new("TextLabel"); trackerLabel.Size=UDim2.fromOffset(190,46); trackerLabel.Position=UDim2.fromOffset(10,110); trackerLabel.BackgroundColor3=Color3.new(0,0,0); trackerLabel.BackgroundTransparency=0.4; trackerLabel.TextColor3=Color3.new(1,1,1); trackerLabel.Font=Enum.Font.GothamBold; trackerLabel.TextSize=14; trackerLabel.RichText=true; trackerLabel.Parent=trackerGui
+    Instance.new("UICorner",trackerLabel).CornerRadius=UDim.new(0,6); makeDraggable(trackerLabel)
+    Shared.setTrackerVisible=function(v) trackerGui.Enabled=v end
+    onCleanup(function() Shared.setTrackerVisible=function(_v) end; trackerGui:Destroy() end)
+    local function cdText(label,readyAt)
+        local r=readyAt-os.clock()
+        if r<=0 then return label..': <font color="rgb(120,255,140)">READY</font>' end
+        return label..': <font color="rgb(255,120,120)">'..("%.1fs"):format(r).."</font>"
+    end
+    local ttimer=0
+    connect(RunService.Heartbeat,function(dt)
+        if not trackerGui.Enabled then return end; ttimer+=dt; if ttimer<0.1 then return end; ttimer=0
+        trackerLabel.Text=cdText("Side",cooldowns.side).."\n"..cdText("Front/Back",cooldowns.frontBack)
+    end)
+    connect(UserInputService.InputBegan,function(input)
+        if UserInputService:GetFocusedTextBox() or not inputMatchesBind(input,"Keybind_GameDash") then return end
+        local hum=getHumanoid(); local root=getRoot(); local cam=workspace.CurrentCamera
+        if not hum or not root or not cam then return end
+        local look=Vector3.new(cam.CFrame.LookVector.X,0,cam.CFrame.LookVector.Z)
+        if look.Magnitude<0.01 then look=Vector3.new(root.CFrame.LookVector.X,0,root.CFrame.LookVector.Z) end
+        look=look.Unit
+        local kind="front"; local dir=look; local move=hum.MoveDirection
+        if move.Magnitude>0.1 then dir=Vector3.new(move.X,0,move.Z).Unit; local fd=dir:Dot(look); if fd>0.5 then kind="front" elseif fd<-0.5 then kind="back" else kind="side" end end
+        local now=os.clock()
+        local ready=(kind=="side" and now>=cooldowns.side) or (kind~="side" and now>=cooldowns.frontBack)
+        if not ready then return end
+        if kind=="side" then cooldowns.side=now+SIDE_CD else cooldowns.frontBack=now+FB_CD end
+        if not Toggles.Dash_Enabled.Value or isRagdolled(hum) then return end
+        local boost=(tonumber(Options.Dash_FrontBoost.Value) or 25)
+        if kind=="side" then boost=(tonumber(Options.Dash_SideBoost.Value) or 40)
+        elseif kind=="back" then boost=(tonumber(Options.Dash_BackBoost.Value) or 25) end
+        dashing={kind=kind,direction=dir,speed=boost,endsAt=now+(tonumber(Options.Dash_Duration.Value) or 250)/1000}
+    end)
+    connect(RunService.Heartbeat,function(dt)
+        if not dashing then return end; local root=getRoot()
+        if not root or os.clock()>=dashing.endsAt or isRagdolled(getHumanoid()) then dashing=nil; return end
+        local dir=dashing.direction
+        if dashing.kind=="front" then local cam=workspace.CurrentCamera; if cam then local l=Vector3.new(cam.CFrame.LookVector.X,0,cam.CFrame.LookVector.Z); if l.Magnitude>0.01 then dir=l.Unit end end end
+        root.CFrame=root.CFrame+dir*(dashing.speed*dt)
+    end)
+
+    -- ----------------------------------------------------------------
+    -- Lock-On  (FIX: no AutoRotate manipulation → no ragdoll weirdness)
+    -- Camera lerps toward target. Character faces target via CFrame only
+    -- when we're actually locked on and not ragdolled.
+    -- ----------------------------------------------------------------
+    local LockBox  = addGroup(CombatTab, "Right", "Lock-On", "locate-fixed")
+    local lockTarget = nil; local marker = nil
+    LockBox:AddLabel({ Text="Smooth lock-on targeting the closest player.", DoesWrap=true })
+    LockBox:AddSlider("LockOn_Range",    { Text="Lock Range",       Min=10, Max=300, Default=120, Rounding=0, Suffix=" studs" })
+    LockBox:AddSlider("LockOn_Smoothing",{ Text="Camera Snap Speed",Min=10, Max=100, Default=80,  Rounding=0, Suffix="%" })
+    LockBox:AddToggle("LockOn_Marker",   { Text="Show Target UI Bracket", Default=true }):AddColorPicker("LockOn_BracketColor",{ Default=Color3.fromRGB(255,255,255), Title="Bracket Color" })
+
+    local function targetTorsoInfo(plr)
+        local char=plr.Character; if not char then return nil,nil end
+        local torso=char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or char:FindFirstChild("HumanoidRootPart")
+        local hum=char:FindFirstChildOfClass("Humanoid")
+        if torso and hum and hum.Health>0 then return torso,hum end
+        return nil,nil
+    end
+    local function removeMarker() if marker then marker.gui:Destroy(); marker=nil end end
+    local function findClosestTarget()
+        local myRoot=getRoot(); if not myRoot then return nil end
+        local best=nil; local bestDist=Options.LockOn_Range.Value
+        for _,plr in Players:GetPlayers() do
+            if plr~=LocalPlayer then
+                local torso=targetTorsoInfo(plr)
+                if torso then
+                    local d=(torso.Position-myRoot.Position).Magnitude
+                    if d<=bestDist then bestDist=d; best=plr end
+                end
+            end
+        end
+        return best
+    end
+    -- FIX: no setAutoRotateLock — that was causing the ragdoll weirdness
+    local function setLock(plr)
+        lockTarget=plr; removeMarker()
+        if plr then Library:Notify("Locked: "..playerLabel(plr),2) else Library:Notify("Lock Released",2) end
+    end
+    local function toggleLock()
+        if lockTarget then setLock(nil); return end
+        local target=findClosestTarget()
+        if target then setLock(target) else Library:Notify("No player in range",2) end
+    end
+    connect(UserInputService.InputBegan,function(input)
+        if UserInputService:GetFocusedTextBox() then return end
+        if inputMatchesBind(input,"LockOn_Key") then toggleLock() end
+    end)
+    local function createTargetBracket(parent,color)
+        local gui=Instance.new("BillboardGui"); gui.Name="ChillLockBracketUI"; gui.Size=UDim2.fromOffset(130,130); gui.AlwaysOnTop=true; gui.Adornee=parent; gui.Parent=parent
+        local container=Instance.new("Frame",gui); container.Size=UDim2.fromScale(1,1); container.BackgroundTransparency=1
+        local function makeCorner(xScale,xOff,yScale,yOff,w1,h1,w2,h2)
+            local f1=Instance.new("Frame",container); f1.Size=UDim2.fromOffset(w1,h1); f1.Position=UDim2.new(xScale,xOff,yScale,yOff); f1.BackgroundColor3=color; f1.BorderSizePixel=0
+            local f2=Instance.new("Frame",container); f2.Size=UDim2.fromOffset(w2,h2); f2.Position=UDim2.new(xScale,xOff,yScale,yOff); f2.BackgroundColor3=color; f2.BorderSizePixel=0
+        end
+        makeCorner(0,0,0,0,24,3,3,24); makeCorner(1,-24,0,0,24,3,3,24)
+        makeCorner(0,0,1,-24,24,3,3,24); makeCorner(1,-24,1,-24,24,3,3,24)
+        return gui
+    end
+    pcall(function() RunService:UnbindFromRenderStep("ChillLockOn") end)
+    RunService:BindToRenderStep("ChillLockOn",Enum.RenderPriority.Camera.Value+1,function(dt)
+        if not lockTarget then return end
+        local cam=workspace.CurrentCamera; local myRoot=getRoot(); local myHum=getHumanoid()
+        if not cam or not myRoot then return end
+        local torso,_hum=targetTorsoInfo(lockTarget)
+        -- release only if dead/gone or out of max range
+        if not torso or (torso.Position-myRoot.Position).Magnitude>Options.LockOn_Range.Value then
+            setLock(nil); Library:Notify("Lock-on released (Out of range)",2); return
+        end
+        -- camera lerp toward torso
+        local snapPower=Options.LockOn_Smoothing.Value/100
+        local lookPos=Vector3.new(torso.Position.X,torso.Position.Y+0.5,torso.Position.Z)
+        local targetCF=CFrame.lookAt(cam.CFrame.Position,lookPos)
+        cam.CFrame=cam.CFrame:Lerp(targetCF, math.clamp(dt*(snapPower*20),0.05,0.95))
+        -- face target: ONLY rotate HRP on XZ plane, do NOT touch AutoRotate or PlatformStand
+        if myHum and not isRagdolled(myHum) then
+            local flat=Vector3.new(torso.Position.X,myRoot.Position.Y,torso.Position.Z)
+            if (flat-myRoot.Position).Magnitude>0.5 then
+                myRoot.CFrame=CFrame.new(myRoot.Position,flat)
+            end
+        end
+        -- marker
+        if Toggles.LockOn_Marker.Value then
+            local col=Options.LockOn_BracketColor and Options.LockOn_BracketColor.Value or Color3.fromRGB(255,255,255)
+            if not marker or marker.gui.Parent~=torso then
+                removeMarker()
+                marker={gui=createTargetBracket(torso,col)}
+            end
+        else removeMarker() end
+    end)
+    onCleanup(function() pcall(function() RunService:UnbindFromRenderStep("ChillLockOn") end); removeMarker() end)
+end
+
+------------------------------------------------------------
+-- FLING TAB
+------------------------------------------------------------
+do
+    local FlingBox = addGroup(FlingTab,"Left","Fling Tool","tornado")
+    FlingBox:AddDropdown("Fling_Target", { SpecialType="Player", ExcludeLocalPlayer=true, Text="Fling Target" })
+    FlingBox:AddSlider("Fling_Power",    { Text="Fling Power", Min=1000, Max=300000, Default=60000, Rounding=0 })
+    FlingBox:AddSlider("Fling_Duration", { Text="Fling Time",  Min=300,  Max=4000,   Default=1500,  Rounding=0, Suffix="ms" })
+    FlingBox:AddToggle("Fling_ReturnBack",{ Text="Return To My Spot After", Default=true })
+    local function flingTargetTorso(plr)
+        local char=plr.Character; if not char then return nil end
+        local t=char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or char:FindFirstChild("HumanoidRootPart")
+        local h=char:FindFirstChildOfClass("Humanoid")
+        if t and h and h.Health>0 then return t end; return nil
+    end
+    local function flingPlayer(target)
+        if Shared.flinging then return end
+        local root=getRoot(); local hum=getHumanoid(); local tRoot=target and flingTargetTorso(target)
+        if not root or not hum or not tRoot then Library:Notify("Can't fling — target not alive",3); return end
+        Shared.flinging=true; Shared.restoreNoclip()
+        local origin=root.CFrame; local power=Options.Fling_Power.Value; local duration=Options.Fling_Duration.Value/1000; local start=os.clock()
+        Library:Notify("Flinging "..playerLabel(target).."...",2)
+        task.spawn(function()
+            pcall(function()
+                hum.PlatformStand=true
+                while os.clock()-start<duration do
+                    local r=getRoot(); local tr=flingTargetTorso(target)
+                    if not r or not tr then break end
+                    r.CFrame=tr.CFrame; r.AssemblyAngularVelocity=Vector3.new(0,power,0); r.AssemblyLinearVelocity=Vector3.new(power,power,power)
+                    RunService.Heartbeat:Wait()
+                end
+            end)
+            local r=getRoot()
+            if r then r.AssemblyAngularVelocity=Vector3.zero; r.AssemblyLinearVelocity=Vector3.zero; if Toggles.Fling_ReturnBack.Value then r.CFrame=origin end end
+            local h2=getHumanoid(); if h2 then h2.PlatformStand=false; h2:ChangeState(Enum.HumanoidStateType.GettingUp) end
+            Shared.flinging=false
+        end)
+    end
+    FlingBox:AddButton({ Text="Fling Target", Func=function() flingPlayer(resolvePlayer(Options.Fling_Target.Value)) end })
+    local AuraBox=addGroup(FlingTab,"Right","Fling Aura & Touch Fling","zap")
+    AuraBox:AddToggle("FlingAura_Enabled", { Text="Fling Aura",   Default=false })
+    AuraBox:AddSlider("FlingAura_Radius",  { Text="Fling Aura Radius", Min=5, Max=100, Default=15, Rounding=0, Suffix=" studs" })
+    AuraBox:AddToggle("TouchFling_Enabled",{ Text="Touch Fling",  Default=false })
+    connect(RunService.Heartbeat,function()
+        if not Toggles.TouchFling_Enabled or not Toggles.TouchFling_Enabled.Value then return end
+        local r=getRoot(); if r then local vel=r.AssemblyLinearVelocity; r.AssemblyLinearVelocity=Vector3.new(0,9999,0); RunService.RenderStepped:Wait(); r.AssemblyLinearVelocity=vel end
+    end)
+    local flingAuraCDs={}
+    connect(RunService.Heartbeat,function()
+        if not Toggles.FlingAura_Enabled.Value or Shared.flinging then return end
+        local myRoot=getRoot(); if not myRoot then return end
+        local radius=Options.FlingAura_Radius.Value; local now=os.clock()
+        for _,plr in Players:GetPlayers() do
+            if plr~=LocalPlayer then
+                local root=flingTargetTorso(plr)
+                if root and (root.Position-myRoot.Position).Magnitude<=radius then
+                    if not flingAuraCDs[plr] or now-flingAuraCDs[plr]>2 then flingAuraCDs[plr]=now; flingPlayer(plr); break end
+                end
+            end
+        end
+    end)
+end
+
+------------------------------------------------------------
+-- MACROS TAB
+------------------------------------------------------------
+do
+    -- ============================================================
+    -- CHILL TECH HUB  (embedded, runs via loadstring)
+    -- Per-config ping delay added. MeowTech stays. Themes stay.
+    -- ============================================================
+    local ExternalBox = addGroup(MacrosTab,"Left","External Scripts (Tech Suite)","download")
+
+    -- NOTE: This string is loaded via loadstring() so it runs as its own
+    -- environment. All TSB services are re-acquired inside it.
+    local CHILL_TECH_SOURCE = [=====[
+local RunService        = game:GetService('RunService')
+local Players           = game:GetService('Players')
+local UserInputService  = game:GetService('UserInputService')
+local VirtualInputManager = game:GetService('VirtualInputManager')
+local LocalPlayer       = Players.LocalPlayer
+
+local ScriptId = math.random(1,1000000)
+_G.VuxLethalId = ScriptId
+local function IsCurrent() return _G.VuxLethalId == ScriptId end
+
+-- Runtime values (set by LoadConfig)
+local DelayValue    = 0.38
+local AccuracyValue = 15
+local CancelValue   = 0.4
+local PingDelayMs   = 0        -- per-config ping delay
+local Enabled       = true
+local IsExecuting   = false
+local IsNoclipping  = false
+local ConfirmTime   = 0
+
+local DoJump           = false
+local DoRotateCamera   = false
+local Flick1Angle      = 180
+local Flick2Delay      = 8
+local Flick2Angle      = 190
+local Flick3Delay      = 7
+local Flick3Angle      = 360
+local DoLockOn         = false
+local LockOnAfter      = 3
+local LockOnPrecision  = 54
+local LockOnDelay      = 4
+local ExecMode         = 'flick'
+local JumpValue        = 55
+
+-- Configs — each has a PingMs field (milliseconds of extra delay before dash)
+local Configs = {
+    {Name='Loop Dash',   ExecMode='flick', PingMs=0,  Accuracy=18,   Cancel=0.45, Jump=false, JumpValue=55,  RotateCamera=false, F1Angle=175, F2Delay=5, F2Angle=185, F3Delay=4, F3Angle=175,  LockOn=true,  LockOnAfter=3, LockOnPrecision=65, LockOnDelay=2},
+    {Name='V1',          ExecMode='v1',    PingMs=0,  Accuracy=15,   Cancel=0.4,  Jump=true,  JumpValue=55,  RotateCamera=false, F1Angle=0,   F2Delay=0, F2Angle=0,   F3Delay=0, F3Angle=0,    LockOn=false, LockOnAfter=3, LockOnPrecision=54, LockOnDelay=4},
+    {Name='V2',          ExecMode='v2',    PingMs=0,  Accuracy=0.25, Cancel=0.4,  Jump=true,  JumpValue=55,  RotateCamera=false, F1Angle=0,   F2Delay=0, F2Angle=0,   F3Delay=0, F3Angle=0,    LockOn=false, LockOnAfter=3, LockOnPrecision=54, LockOnDelay=4},
+    {Name='V3',          ExecMode='v1',    PingMs=0,  Accuracy=12,   Cancel=0.38, Jump=true,  JumpValue=60,  RotateCamera=true,  F1Angle=180, F2Delay=4, F2Angle=180, F3Delay=3, F3Angle=360,  LockOn=true,  LockOnAfter=1, LockOnPrecision=85, LockOnDelay=1},
+    {Name='Tornado Tech',ExecMode='flick', PingMs=0,  Accuracy=8,    Cancel=0.32, Jump=true,  JumpValue=65,  RotateCamera=false, F1Angle=120, F2Delay=2, F2Angle=180, F3Delay=2, F3Angle=360,  LockOn=true,  LockOnAfter=1, LockOnPrecision=98, LockOnDelay=1},
+    {Name='MeowTech',    ExecMode='meow',  PingMs=0,  Accuracy=12,   Cancel=0.4,  Jump=true,  JumpValue=55,  RotateCamera=false, F1Angle=0,   F2Delay=0, F2Angle=0,   F3Delay=0, F3Angle=0,    LockOn=false, LockOnAfter=3, LockOnPrecision=54, LockOnDelay=4},
+}
+
+local function FireDash()
+    local c=LocalPlayer.Character; if not c then return end
+    local rm=c:FindFirstChild('Communicate')
+    if rm then rm:FireServer({Dash=Enum.KeyCode.W,Key=Enum.KeyCode.Q,Goal='KeyPress'}) end
+end
+local function Clip()
+    IsNoclipping=false
+    local c=LocalPlayer.Character; if not c then return end
+    local h=c:FindFirstChild('Humanoid'); if h then h.AutoRotate=true end
+end
+local function ForceCancel()
+    Clip()
+    local c=LocalPlayer.Character
+    local Root=c and c:FindFirstChild('HumanoidRootPart')
+    if Root then
+        for _,Obj in pairs(Root:GetChildren()) do
+            if Obj:IsA('BodyVelocity') or Obj:IsA('LinearVelocity') or Obj:IsA('Attachment') or Obj:IsA('BodyAngularVelocity') then Obj:Destroy() end
+        end
+        Root.AssemblyLinearVelocity=Vector3.zero
+    end
+end
+local function GetTorsoTarget()
+    local c=LocalPlayer.Character; if not c then return nil end
+    local Root=c:FindFirstChild('HumanoidRootPart'); if not Root then return nil end
+    local Params=OverlapParams.new(); Params.FilterType=Enum.RaycastFilterType.Exclude; Params.FilterDescendantsInstances={c}
+    local Parts=workspace:GetPartBoundsInRadius(Root.Position,AccuracyValue+30,Params)
+    local Target,Dist=nil,999
+    for _,Part in pairs(Parts) do
+        local Model=Part:FindFirstAncestorOfClass('Model')
+        if Model and Model:FindFirstChild('Humanoid') and Model~=c then
+            local Torso=Model:FindFirstChild('UpperTorso') or Model:FindFirstChild('Torso') or Model:FindFirstChild('HumanoidRootPart')
+            if Torso then local D=(Root.Position-Torso.Position).Magnitude; if D<Dist then Dist=D; Target=Torso end end
+        end
+    end
+    return Target
+end
+local function ApplyFlick(Root,AngleDeg) if Root and Root.Parent then Root.CFrame=Root.CFrame*CFrame.Angles(0,math.rad(AngleDeg),0) end end
+local function LockOnToTarget(Root,Torso,PrecPct)
+    if not Root or not Root.Parent or not Torso or not Torso.Parent then return end
+    Root.CFrame=Root.CFrame:Lerp(CFrame.lookAt(Root.Position,Vector3.new(Torso.Position.X,Root.Position.Y,Torso.Position.Z)),math.clamp(PrecPct/100,0,1))
+end
+
+-- MeowTech execution
+local function ExecuteMeow()
+    local c=LocalPlayer.Character; if not c then return end
+    local rm=c:FindFirstChild('Communicate')
+    if rm then rm:FireServer({Dash=Enum.KeyCode.W,Key=Enum.KeyCode.Q,Goal='KeyPress'}) end
+    VirtualInputManager:SendKeyEvent(true,Enum.KeyCode.Q,false,game); task.wait(0.05); VirtualInputManager:SendKeyEvent(false,Enum.KeyCode.Q,false,game)
+    local enemyTorso=GetTorsoTarget()
+    if enemyTorso and c:FindFirstChild('HumanoidRootPart') then
+        local myHRP=c.HumanoidRootPart; local st=tick(); local conn
+        conn=RunService.Heartbeat:Connect(function()
+            if not enemyTorso or not enemyTorso.Parent or (tick()-st>=0.3) then conn:Disconnect(); return end
+            myHRP.CFrame=CFrame.new(enemyTorso.Position+Vector3.new(0,1,0))*CFrame.Angles(math.rad(90),0,0)
+        end)
+    end
+end
+
+local function ExecuteDash()
+    if not IsCurrent() or IsExecuting or not Enabled then return end
+    local c=LocalPlayer.Character
+    local Root=c and c:FindFirstChild('HumanoidRootPart')
+    local Humanoid=c and c:FindFirstChild('Humanoid')
+    if not Root or not Humanoid then return end
+
+    if ExecMode=='meow' then
+        if PingDelayMs>0 then task.wait(PingDelayMs/1000) end
+        ExecuteMeow(); return
+    end
+
+    local Torso=GetTorsoTarget(); if not Torso then Clip(); return end
+    IsExecuting=true
+
+    -- base delay (0.38s) + optional ping compensation
+    task.wait(0.38 + PingDelayMs/1000)
+    if not IsCurrent() then IsExecuting=false; return end
+    if not Torso.Parent then IsExecuting=false; Clip(); return end
+
+    if ExecMode=='v1' then
+        Root.AssemblyLinearVelocity=Vector3.new(Root.AssemblyLinearVelocity.X,JumpValue,Root.AssemblyLinearVelocity.Z)
+        IsNoclipping=true; FireDash()
+        local StartT=tick(); local ForwardDir=(Torso.Position-Root.Position).Unit; local SideVec=Vector3.new(-ForwardDir.Z,0,ForwardDir.X)
+        if Humanoid and Humanoid.Parent then Humanoid.AutoRotate=false end
+        local Bav=Instance.new('BodyAngularVelocity'); Bav.MaxTorque=Vector3.new(0,1000000,0); Bav.P=15000; Bav.Parent=Root
+        local Conn; Conn=RunService.Heartbeat:Connect(function()
+            if not IsCurrent() or not Torso or not Torso.Parent or not Root or not Root.Parent then if Bav then Bav:Destroy() end; Clip(); IsExecuting=false; if Conn then Conn:Disconnect() end; return end
+            local Elapsed=tick()-StartT; local TorsoPos=Torso.Position; local RootPos=Root.Position
+            local Angle=(Elapsed/0.45)*(math.pi/1.5); local Radius=AccuracyValue*(1-math.clamp(Elapsed/0.45,0,1))
+            local TLP=TorsoPos+(SideVec*math.cos(Angle)+ForwardDir*math.sin(Angle))*Radius
+            local LookCF=CFrame.lookAt(RootPos,Vector3.new(TLP.X,RootPos.Y,TLP.Z))
+            local RelCF=Root.CFrame:Inverse()*LookCF; local _,Y,_=RelCF:ToEulerAnglesXYZ()
+            if Bav and Bav.Parent then Bav.AngularVelocity=Vector3.new(0,math.clamp(Y*30,-200,200),0) end
+            local DistXZ=(Vector2.new(RootPos.X,RootPos.Z)-Vector2.new(TorsoPos.X,TorsoPos.Z)).Magnitude
+            if Elapsed>CancelValue and DistXZ<2.2 then if Bav then Bav:Destroy() end; ForceCancel(); IsExecuting=false; if Conn then Conn:Disconnect() end; return end
+            if not Enabled or Elapsed>1.5 then if Bav then Bav:Destroy() end; Clip(); IsExecuting=false; if Conn then Conn:Disconnect() end; return end
+        end)
+
+    elseif ExecMode=='v2' then
+        Root.AssemblyLinearVelocity=Vector3.new(Root.AssemblyLinearVelocity.X,JumpValue,Root.AssemblyLinearVelocity.Z)
+        IsNoclipping=true; FireDash()
+        local StartT=tick(); local Flipped=false; local FlipDelay=AccuracyValue
+        if Humanoid and Humanoid.Parent then Humanoid.AutoRotate=false end
+        local Conn; Conn=RunService.Heartbeat:Connect(function()
+            if not IsCurrent() or not Torso or not Torso.Parent or not Root or not Root.Parent then Clip(); IsExecuting=false; if Conn then Conn:Disconnect() end; return end
+            local Elapsed=tick()-StartT; local TorsoPos=Torso.Position; local RootPos=Root.Position
+            if Elapsed>=FlipDelay and not Flipped then Root.CFrame=Root.CFrame*CFrame.Angles(0,math.pi,0); Flipped=true end
+            local DistXZ=(Vector2.new(RootPos.X,RootPos.Z)-Vector2.new(TorsoPos.X,TorsoPos.Z)).Magnitude
+            if Elapsed>CancelValue and DistXZ<2.2 then ForceCancel(); IsExecuting=false; if Conn then Conn:Disconnect() end; return end
+            if not Enabled or Elapsed>1.5 then Clip(); IsExecuting=false; if Conn then Conn:Disconnect() end; return end
+        end)
+
+    else -- flick mode
+        if DoJump then Root.AssemblyLinearVelocity=Vector3.new(Root.AssemblyLinearVelocity.X,JumpValue,Root.AssemblyLinearVelocity.Z) end
+        FireDash()
+        local ForwardDir=(Torso.Position-Root.Position).Unit; local SideVec=Vector3.new(-ForwardDir.Z,0,ForwardDir.X)
+        ApplyFlick(Root,Flick1Angle)
+        if LockOnAfter==1 and DoLockOn then task.delay(LockOnDelay/10,function() LockOnToTarget(Root,Torso,LockOnPrecision) end) end
+        task.delay(Flick2Delay/50,function()
+            if not IsCurrent() or not Root or not Root.Parent then return end
+            ApplyFlick(Root,Flick2Angle)
+            if DoRotateCamera then local Cam=workspace.CurrentCamera; if Cam then Cam.CFrame=Cam.CFrame*CFrame.Angles(0,math.rad(Flick2Angle),0) end end
+            if LockOnAfter==2 and DoLockOn then task.delay(LockOnDelay/10,function() LockOnToTarget(Root,Torso,LockOnPrecision) end) end
+        end)
+        task.delay((Flick2Delay+Flick3Delay)/50,function()
+            if not IsCurrent() or not Root or not Root.Parent then return end
+            ApplyFlick(Root,Flick3Angle)
+            if DoRotateCamera then local Cam=workspace.CurrentCamera; if Cam then Cam.CFrame=Cam.CFrame*CFrame.Angles(0,math.rad(Flick3Angle),0) end end
+            if LockOnAfter==3 and DoLockOn then task.delay(LockOnDelay/10,function() LockOnToTarget(Root,Torso,LockOnPrecision) end) end
+        end)
+        if Humanoid and Humanoid.Parent then Humanoid.AutoRotate=false end
+        local StartT=tick()
+        local Bav=Instance.new('BodyAngularVelocity'); Bav.MaxTorque=Vector3.new(0,1000000,0); Bav.P=15000; Bav.Parent=Root
+        local Conn; Conn=RunService.Heartbeat:Connect(function()
+            if not IsCurrent() or not Torso or not Torso.Parent or not Root or not Root.Parent then if Bav then Bav:Destroy() end; Clip(); IsExecuting=false; if Conn then Conn:Disconnect() end; return end
+            local Elapsed=tick()-StartT; local TorsoPos=Torso.Position; local RootPos=Root.Position
+            local Angle=(Elapsed/0.45)*(math.pi/1.5); local Radius=AccuracyValue*(1-math.clamp(Elapsed/0.45,0,1))
+            local TLP=TorsoPos+(SideVec*math.cos(Angle)+ForwardDir*math.sin(Angle))*Radius
+            local LookCF=CFrame.lookAt(RootPos,Vector3.new(TLP.X,RootPos.Y,TLP.Z))
+            local RelCF=Root.CFrame:Inverse()*LookCF; local _,Y,_=RelCF:ToEulerAnglesXYZ()
+            if Bav and Bav.Parent then Bav.AngularVelocity=Vector3.new(0,math.clamp(Y*30,-200,200),0) end
+            local DistXZ=(Vector2.new(RootPos.X,RootPos.Z)-Vector2.new(TorsoPos.X,TorsoPos.Z)).Magnitude
+            if Elapsed>CancelValue and DistXZ<2.2 then if Bav then Bav:Destroy() end; ForceCancel(); IsExecuting=false; if Conn then Conn:Disconnect() end; return end
+            if not Enabled or Elapsed>1.5 then if Bav then Bav:Destroy() end; Clip(); IsExecuting=false; if Conn then Conn:Disconnect() end; return end
+        end)
+    end
+end
+
+RunService.PreSimulation:Connect(function()
+    if not IsCurrent() or not IsNoclipping then return end
+    local c=LocalPlayer.Character; if not c then return end
+    for _,Model in pairs(workspace:GetChildren()) do
+        if Model:IsA('Model') and Model~=c and Model:FindFirstChildOfClass('Humanoid') then
+            for _,Part in pairs(Model:GetDescendants()) do if Part:IsA('BasePart') and Part.CanCollide then Part.CanCollide=false end end
+        end
+    end
+end)
+
+-- ===================== GUI =====================
+local ExistingGui=game.CoreGui:FindFirstChild('VuxLoopDashGui'); if ExistingGui then ExistingGui:Destroy() end
+local ScreenGui=Instance.new('ScreenGui'); ScreenGui.Name='VuxLoopDashGui'; ScreenGui.ResetOnSpawn=false; ScreenGui.Parent=game.CoreGui
+local MainFrame=Instance.new('Frame',ScreenGui)
+MainFrame.BackgroundColor3=Color3.fromRGB(200,80,0); MainFrame.Size=UDim2.new(0,240,0,45); MainFrame.Position=UDim2.new(0.05,0,0.4,0); MainFrame.Draggable=true; MainFrame.Active=true
+local MG=Instance.new('UIGradient',MainFrame); MG.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(240,110,0)),ColorSequenceKeypoint.new(1,Color3.fromRGB(150,50,0))}); MG.Rotation=90
+Instance.new('UICorner',MainFrame).CornerRadius=UDim.new(0,8)
+local MS=Instance.new('UIStroke',MainFrame); MS.Color=Color3.fromRGB(255,140,0); MS.Thickness=1.2
+local TitleLabel=Instance.new('TextLabel',MainFrame); TitleLabel.Text='Chill Tech 🎃'; TitleLabel.Size=UDim2.new(0.45,0,1,0); TitleLabel.Position=UDim2.new(0.03,0,0,0); TitleLabel.TextColor3=Color3.fromRGB(255,255,255); TitleLabel.BackgroundTransparency=1; TitleLabel.Font=Enum.Font.GothamBold; TitleLabel.TextSize=11; TitleLabel.TextXAlignment=Enum.TextXAlignment.Left
+local function MakeHeaderBtn(text,xpos) local Btn=Instance.new('TextButton',MainFrame); Btn.Text=text; Btn.Size=UDim2.new(0,22,0,22); Btn.Position=UDim2.new(xpos,0,0.18,0); Btn.BackgroundColor3=Color3.fromRGB(180,60,0); Btn.TextColor3=Color3.fromRGB(255,255,255); Instance.new('UICorner',Btn).CornerRadius=UDim.new(0,5); return Btn end
+local CloseBtn=MakeHeaderBtn('-',0.50); CloseBtn.BackgroundColor3=Color3.fromRGB(220,50,50)
+local GearBtn=MakeHeaderBtn('⚙',0.62); local CfgBtn=MakeHeaderBtn('📋',0.74); local ThemeBtn=MakeHeaderBtn('🎨',0.86)
+
+local function MakePanel(h,canvas)
+    local F=Instance.new('ScrollingFrame',MainFrame); F.BackgroundColor3=Color3.fromRGB(30,14,6); F.Size=UDim2.new(1,0,0,h); F.Position=UDim2.new(0,0,1,8); F.Visible=false; F.CanvasSize=UDim2.new(0,0,0,canvas); F.ScrollBarThickness=3
+    Instance.new('UICorner',F).CornerRadius=UDim.new(0,8); local S=Instance.new('UIStroke',F); S.Color=Color3.fromRGB(255,120,0); S.Thickness=1
+    local L=Instance.new('UIListLayout',F); L.Padding=UDim.new(0,4); L.HorizontalAlignment=Enum.HorizontalAlignment.Center; return F
+end
+local SettingsPanel=MakePanel(160,260); local ConfigPanel=MakePanel(260,500); local ThemePanel=MakePanel(150,220)
+local AllPanels={SettingsPanel,ConfigPanel,ThemePanel}
+local function TogglePanel(p) for _,panel in pairs(AllPanels) do panel.Visible=(panel==p) and not p.Visible end end
+
+-- settings panel
+local StatusBtn=Instance.new('TextButton',SettingsPanel); StatusBtn.Size=UDim2.new(0.92,0,0,26); StatusBtn.Text='Status: ON'; StatusBtn.BackgroundColor3=Color3.fromRGB(255,120,0); StatusBtn.TextColor3=Color3.fromRGB(255,255,255); StatusBtn.Font=Enum.Font.GothamBold; StatusBtn.TextSize=12; Instance.new('UICorner',StatusBtn).CornerRadius=UDim.new(0,5)
+StatusBtn.MouseButton1Click:Connect(function() Enabled=not Enabled; StatusBtn.Text=Enabled and 'Status: ON' or 'Status: OFF'; StatusBtn.BackgroundColor3=Enabled and Color3.fromRGB(255,120,0) or Color3.fromRGB(200,50,50) end)
+
+-- Ping delay input in settings panel (global override for quick testing)
+local function makeSettingRow(parent,labelTxt,defaultVal)
+    local row=Instance.new('Frame',parent); row.Size=UDim2.new(0.92,0,0,28); row.BackgroundTransparency=1
+    local lbl=Instance.new('TextLabel',row); lbl.Text=labelTxt; lbl.Size=UDim2.new(0.6,0,1,0); lbl.BackgroundTransparency=1; lbl.TextColor3=Color3.fromRGB(255,200,150); lbl.Font=Enum.Font.Gotham; lbl.TextSize=10; lbl.TextXAlignment=Enum.TextXAlignment.Left
+    local box=Instance.new('TextBox',row); box.Size=UDim2.new(0.37,0,0.78,0); box.Position=UDim2.new(0.61,0,0.11,0); box.Text=tostring(defaultVal); box.BackgroundColor3=Color3.fromRGB(70,30,10); box.TextColor3=Color3.fromRGB(255,220,180); box.Font=Enum.Font.Gotham; box.TextSize=10; Instance.new('UICorner',box).CornerRadius=UDim.new(0,4)
+    return box
+end
+local GlobalPingBox = makeSettingRow(SettingsPanel,'Global Ping (ms)','0')
+GlobalPingBox.FocusLost:Connect(function() local v=tonumber(GlobalPingBox.Text); if v then PingDelayMs=math.clamp(math.floor(v),0,2000) end end)
+local settingsNote=Instance.new('TextLabel',SettingsPanel); settingsNote.Size=UDim2.new(0.92,0,0,30); settingsNote.BackgroundTransparency=1; settingsNote.TextWrapped=true; settingsNote.TextColor3=Color3.fromRGB(180,130,80); settingsNote.Font=Enum.Font.Gotham; settingsNote.TextSize=9; settingsNote.Text='Per-config ping is set in the 📋 panel. Global ping overrides all.'
+
+-- config panel
+local ActiveLabel=Instance.new('TextLabel',ConfigPanel); ActiveLabel.Size=UDim2.new(0.92,0,0,22); ActiveLabel.Text='Active: Loop Dash'; ActiveLabel.TextColor3=Color3.fromRGB(255,200,100); ActiveLabel.BackgroundTransparency=1; ActiveLabel.Font=Enum.Font.GothamBold; ActiveLabel.TextSize=11
+local DescLabel=Instance.new('TextLabel',ConfigPanel); DescLabel.Size=UDim2.new(0.92,0,0,28); DescLabel.TextWrapped=true; DescLabel.TextColor3=Color3.fromRGB(170,170,170); DescLabel.BackgroundTransparency=1; DescLabel.Font=Enum.Font.Gotham; DescLabel.TextSize=9; DescLabel.TextXAlignment=Enum.TextXAlignment.Left
+local ConfigDescs={
+    'Loop Dash: fire after mini uppercut. Loops under/behind torso.',
+    'V1: spiral steering + jump + noclip. Direct torso lock.',
+    'V2: jump + 180 flip onto target spine.',
+    'V3: aggressive high-precision torso tracking.',
+    'Tornado Tech: fast spin snap-to-torso flick.',
+    'MeowTech: instant sticky attachment.'
+}
+-- Per-config ping input shown below each button
+local ConfigBtns={}; local PingBoxes={}
+
+local function LoadConfig(idx)
+    local C=Configs[idx]; if not C then return end
+    ExecMode=C.ExecMode or 'flick'; AccuracyValue=C.Accuracy; CancelValue=C.Cancel; DoJump=C.Jump; JumpValue=C.JumpValue or 55; DoRotateCamera=C.RotateCamera
+    Flick1Angle=C.F1Angle; Flick2Delay=C.F2Delay; Flick2Angle=C.F2Angle; Flick3Delay=C.F3Delay; Flick3Angle=C.F3Angle
+    DoLockOn=C.LockOn; LockOnAfter=C.LockOnAfter; LockOnPrecision=C.LockOnPrecision; LockOnDelay=C.LockOnDelay
+    -- load this config's own ping delay (unless global is set)
+    local globalPing=tonumber(GlobalPingBox.Text) or 0
+    PingDelayMs = globalPing>0 and globalPing or (C.PingMs or 0)
+    ActiveLabel.Text='Active: '..C.Name; DescLabel.Text=ConfigDescs[idx] or ''
+    for i,B in pairs(ConfigBtns) do B.BackgroundColor3=(i==idx) and Color3.fromRGB(200,100,0) or Color3.fromRGB(90,45,20) end
+end
+
+for i,C in ipairs(Configs) do
+    -- main button
+    local Btn=Instance.new('TextButton',ConfigPanel); Btn.Size=UDim2.new(0.92,0,0,30); Btn.BackgroundColor3=(i==1) and Color3.fromRGB(200,100,0) or Color3.fromRGB(90,45,20); Btn.TextColor3=Color3.fromRGB(255,255,255); Btn.Font=Enum.Font.GothamBold; Btn.TextSize=11; Btn.Text=C.Name; Instance.new('UICorner',Btn).CornerRadius=UDim.new(0,5); local S=Instance.new('UIStroke',Btn); S.Color=Color3.fromRGB(255,150,0); S.Thickness=1
+    Btn.MouseButton1Click:Connect(function() LoadConfig(i) end); ConfigBtns[i]=Btn
+    -- per-config ping row
+    local pRow=Instance.new('Frame',ConfigPanel); pRow.Size=UDim2.new(0.92,0,0,24); pRow.BackgroundTransparency=1
+    local pLbl=Instance.new('TextLabel',pRow); pLbl.Text=C.Name..' ping (ms):'; pLbl.Size=UDim2.new(0.62,0,1,0); pLbl.BackgroundTransparency=1; pLbl.TextColor3=Color3.fromRGB(200,160,100); pLbl.Font=Enum.Font.Gotham; pLbl.TextSize=9; pLbl.TextXAlignment=Enum.TextXAlignment.Left
+    local pBox=Instance.new('TextBox',pRow); pBox.Size=UDim2.new(0.35,0,0.82,0); pBox.Position=UDim2.new(0.63,0,0.09,0); pBox.Text=tostring(C.PingMs); pBox.BackgroundColor3=Color3.fromRGB(70,30,10); pBox.TextColor3=Color3.fromRGB(255,220,180); pBox.Font=Enum.Font.Gotham; pBox.TextSize=10; Instance.new('UICorner',pBox).CornerRadius=UDim.new(0,4)
+    local capturedIdx=i
+    pBox.FocusLost:Connect(function()
+        local v=tonumber(pBox.Text); if v then Configs[capturedIdx].PingMs=math.clamp(math.floor(v),0,2000) end
+    end)
+    PingBoxes[i]=pBox
+end
+LoadConfig(1)
+
+-- theme panel
+local Themes={{Name='Halloween',C=Color3.fromRGB(200,80,0)},{Name='Crimson',C=Color3.fromRGB(180,20,20)},{Name='Cyber',C=Color3.fromRGB(20,40,160)},{Name='Neon',C=Color3.fromRGB(40,180,40)},{Name='Purple',C=Color3.fromRGB(120,30,160)}}
+for _,th in ipairs(Themes) do
+    local tBtn=Instance.new('TextButton',ThemePanel); tBtn.Size=UDim2.new(0.92,0,0,26); tBtn.BackgroundColor3=th.C; tBtn.TextColor3=Color3.fromRGB(255,255,255); tBtn.Font=Enum.Font.GothamBold; tBtn.TextSize=11; tBtn.Text=th.Name; Instance.new('UICorner',tBtn).CornerRadius=UDim.new(0,5)
+    tBtn.MouseButton1Click:Connect(function() MainFrame.BackgroundColor3=th.C; MG.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,th.C),ColorSequenceKeypoint.new(1,th.C:Lerp(Color3.new(0,0,0),0.3))}) end)
+end
+
+GearBtn.MouseButton1Click:Connect(function() TogglePanel(SettingsPanel) end)
+CfgBtn.MouseButton1Click:Connect(function() TogglePanel(ConfigPanel) end)
+ThemeBtn.MouseButton1Click:Connect(function() TogglePanel(ThemePanel) end)
+CloseBtn.MouseButton1Click:Connect(function()
+    if tick()-ConfirmTime<=5 then ScreenGui:Destroy(); return end
+    ConfirmTime=tick(); game:GetService('StarterGui'):SetCore('SendNotification',{Text='Click - again to close Chill Tech',Title='Confirm',Duration=5})
+end)
+
+local function SetupCharacter(char)
+    if not IsCurrent() then return end
+    local Humanoid=char:WaitForChild('Humanoid'); char:WaitForChild('HumanoidRootPart')
+    local Animator=Humanoid:WaitForChild('Animator',5); if not Animator then return end
+    Animator.AnimationPlayed:Connect(function(Track)
+        if not IsCurrent() or not Enabled then return end
+        if Track.Animation.AnimationId=='rbxassetid://10503381238' then ExecuteDash() end
+    end)
+end
+if LocalPlayer.Character then SetupCharacter(LocalPlayer.Character) end
+LocalPlayer.CharacterAdded:Connect(SetupCharacter)
+]=====]
+
+    ExternalBox:AddButton({ Text="Open Chill Tech Hub", Func=function()
+        local ok,err=pcall(function()
+            local chunk,compileErr=loadstring(CHILL_TECH_SOURCE)
+            if not chunk then error(compileErr) end
+            chunk()
+        end)
+        if ok then Library:Notify("Chill Tech loaded 🎃",4)
+        else Library:Notify("Chill Tech failed: "..tostring(err),7); warn("[Macros] Chill Tech failed:",err) end
+    end })
+    ExternalBox:AddLabel({ Text="📋 = tech selector with per-config ping. ⚙ = global ping override. 🎨 = theme.", DoesWrap=true })
+    onCleanup(function()
+        pcall(function() _G.VuxLethalId=nil; local g=game:GetService("CoreGui"):FindFirstChild("VuxLoopDashGui"); if g then g:Destroy() end end)
+    end)
+
+    -- ============================================================
+    -- LETHAL DASH  (all settings now actually work)
+    -- ============================================================
+    local LethalBox = addGroup(MacrosTab, "Left", "Lethal Dash", "zap")
+
+    -- Using a plain table so every callback just writes into it
+    local LD = {
+        DETECT_ANIM    = "rbxassetid://12296113986",
+        WAIT_TIME      = 1.6,
+        SNAP_DURATION  = 0.38,
+        VELO_POWER     = 62,
+        LOCK_DISTANCE  = 20,
+        LERP_START     = 0.32,
+        SMOOTH_POWER   = 0.15,
+        PING_MS        = 0,
+    }
+
+    LethalBox:AddToggle("LethalDash_Enabled",{ Text="Lethal Dash", Default=false })
+    LethalBox:AddSlider("LethalDash_JumpPower",   { Text="Jump Power",          Min=0,   Max=200, Default=62,  Rounding=0, Suffix="",    Callback=function(v) LD.VELO_POWER=v    end })
+    LethalBox:AddSlider("LethalDash_SnapDuration",{ Text="Snap Duration (cs)",  Min=5,   Max=120, Default=38,  Rounding=0, Suffix=" cs", Callback=function(v) LD.SNAP_DURATION=v/100 end })
+    LethalBox:AddSlider("LethalDash_LockDist",    { Text="Lock Distance (st)",  Min=5,   Max=80,  Default=20,  Rounding=0, Suffix=" st", Callback=function(v) LD.LOCK_DISTANCE=v  end })
+    LethalBox:AddSlider("LethalDash_PingDelay",   { Text="Ping Delay (ms)",     Min=0,   Max=400, Default=0,   Rounding=0, Suffix=" ms", Callback=function(v) LD.PING_MS=v        end })
+    LethalBox:AddToggle("LethalDash_CamSmooth",   { Text="Camera Smooth",       Default=false })
+
+    local lethalCam    = workspace.CurrentCamera
+    local lethalChar   = nil
+    local lethalHum    = nil
+    local lethalHRP    = nil
+    local lethalAnimConn = nil
+    local lethalSmooth = false
+    local lethalLastCF = lethalCam.CFrame
+    local lethalBusy   = false
+
+    connect(RunService.RenderStepped,function()
+        if not Toggles.LethalDash_Enabled.Value or not lethalSmooth or not Toggles.LethalDash_CamSmooth.Value then return end
+        lethalLastCF=lethalLastCF:Lerp(lethalCam.CFrame,LD.SMOOTH_POWER)
+        lethalCam.CFrame=lethalLastCF
+    end)
+
+    local function lethalGetTorso()
+        local lf=workspace:FindFirstChild("Live"); if not lf then return nil end
+        local best=nil; local bestD=LD.LOCK_DISTANCE
+        for _,v in lf:GetChildren() do
+            if v:IsA("Model") and v~=lethalChar then
+                local torso=v:FindFirstChild("UpperTorso") or v:FindFirstChild("Torso") or v:FindFirstChild("HumanoidRootPart")
+                local hum=v:FindFirstChildOfClass("Humanoid")
+                if torso and hum and hum.Health>0 then
+                    local d=(lethalHRP.Position-torso.Position).Magnitude
+                    if d<=LD.LOCK_DISTANCE and d<bestD then bestD=d; best=torso end
+                end
+            end
+        end
+        return best
+    end
+
+    local function lethalSetup(char)
+        lethalChar=char; lethalHum=char:WaitForChild("Humanoid"); lethalHRP=char:WaitForChild("HumanoidRootPart"); lethalBusy=false
+        if lethalAnimConn then lethalAnimConn:Disconnect() end
+        lethalAnimConn=lethalHum.AnimationPlayed:Connect(function(track)
+            if not Toggles.LethalDash_Enabled.Value then return end
+            if not (track.Animation and track.Animation.AnimationId==LD.DETECT_ANIM) then return end
+            if lethalBusy then return end
+            lethalBusy=true; lethalSmooth=true; lethalLastCF=lethalCam.CFrame
+            task.delay(2,function() lethalSmooth=false end)
+
+            task.wait(LD.WAIT_TIME + LD.PING_MS/1000)
+
+            if not Toggles.LethalDash_Enabled.Value then lethalBusy=false; return end
+            lethalHum:ChangeState(Enum.HumanoidStateType.Jumping); task.wait()
+            local vel=lethalHRP.AssemblyLinearVelocity
+            lethalHRP.AssemblyLinearVelocity=Vector3.new(vel.X, LD.VELO_POWER, vel.Z)
+            lethalChar:WaitForChild("Communicate"):FireServer({Dash=Enum.KeyCode.W,Key=Enum.KeyCode.Q,Goal="KeyPress"})
+
+            local target=lethalGetTorso()
+            if target then
+                task.delay(0.2+LD.PING_MS/1000,function()
+                    if not target or not target.Parent then return end
+                    local startT=tick(); local snapDur=LD.SNAP_DURATION; local conn
+                    conn=RunService.RenderStepped:Connect(function()
+                        if not Toggles.LethalDash_Enabled.Value or (tick()-startT)>=snapDur or not target or not target.Parent then
+                            -- restore AutoRotate cleanly
+                            if lethalHum and lethalHum.Parent then lethalHum.AutoRotate=true end
+                            conn:Disconnect(); return
+                        end
+                        if lethalHum and lethalHum.Parent then lethalHum.AutoRotate=false end
+                        local myPos=lethalHRP.Position; local tPos=target.Position
+                        local flat=Vector3.new(tPos.X,myPos.Y,tPos.Z)
+                        local tCF=CFrame.new(myPos,flat)
+                        local prog=math.clamp((tick()-startT)/snapDur,LD.LERP_START,1)
+                        local smooth=prog*prog*(3-2*prog)
+                        lethalHRP.CFrame=lethalHRP.CFrame:Lerp(tCF,smooth)
+                    end)
+                end)
+            end
+            lethalBusy=false
+        end)
+    end
+
+    if LocalPlayer.Character then lethalSetup(LocalPlayer.Character) end
+    connect(LocalPlayer.CharacterAdded, lethalSetup)
+
+    -- ============================================================
+    -- BACKDASH MACROS  (FIX: waitMs was missing — now defined above)
+    -- ============================================================
+    local TechBox = addGroup(MacrosTab, "Right", "Tech Macros", "keyboard")
+    TechBox:AddLabel({ Text="Keybinds for these are in the Home tab.", DoesWrap=true })
+
+    local function addMacro(id, label, fn)
+        local busy = false
+        TechBox:AddToggle("Macro_"..id.."_Enabled", { Text=label, Default=false })
+        connect(UserInputService.InputBegan, function(input, processed)
+            if processed or busy then return end
+            if not Toggles["Macro_"..id.."_Enabled"].Value then return end
+            if inputMatchesBind(input, "Macro_"..id.."_Key") then
+                busy=true
+                task.spawn(function()
+                    local ok,err=pcall(fn)
+                    if not ok then warn("[Macro "..label.."]",err) end
+                    busy=false
+                end)
+            end
+        end)
+    end
+
+    -- Backdash 1–4
+    -- Pattern: equip number → hold S → click (light attack) → Q dash → release S → equip number
+    -- This is the standard backdash input in TSB.
+    local NUMBER_KEYS={Enum.KeyCode.One,Enum.KeyCode.Two,Enum.KeyCode.Three,Enum.KeyCode.Four}
+    for i=1,4 do
+        local nk=NUMBER_KEYS[i]
+        addMacro("Backdash"..i,"Backdash "..i,function()
+            fireKey(nk)          -- equip
+            waitMs(30)           -- settle
+            keyDown(Enum.KeyCode.S)  -- hold back
+            waitMs(8)
+            clickMouse()         -- light attack / cancel
+            waitMs(12)
+            fireKey(Enum.KeyCode.Q)  -- dash
+            waitMs(8)
+            keyUp(Enum.KeyCode.S)    -- release back
+            waitMs(20)
+            fireKey(nk)          -- re-equip
+        end)
+    end
+end
+
+------------------------------------------------------------
+-- PLAYER TAB
+------------------------------------------------------------
+do
+    local SpeedBox = addGroup(PlayerTab,"Left","Speed","gauge")
+    SpeedBox:AddToggle("Universal_Speed_Enabled",{ Text="Speed Hack", Default=false })
+    SpeedBox:AddSlider("Universal_Speed_Value",  { Text="Walk Speed", Min=16, Max=200, Default=16, Rounding=0 })
+    connect(RunService.Heartbeat,function()
+        if not Toggles.Universal_Speed_Enabled.Value then return end
+        local h=getHumanoid(); if h then h.WalkSpeed=Options.Universal_Speed_Value.Value end
+    end)
+
+    local JumpBox = addGroup(PlayerTab,"Left","Jump","arrow-up")
+    JumpBox:AddToggle("Universal_Jump_Enabled",{ Text="Jump Power Hack", Default=false })
+    JumpBox:AddSlider("Universal_Jump_Value",  { Text="Jump Power", Min=50, Max=300, Default=50, Rounding=0 })
+    connect(RunService.Heartbeat,function()
+        if not Toggles.Universal_Jump_Enabled.Value then return end
+        local h=getHumanoid(); if not h then return end
+        if not h.UseJumpPower then h.UseJumpPower=true end; h.JumpPower=Options.Universal_Jump_Value.Value
+    end)
+
+    local AntiStunBox = addGroup(PlayerTab,"Left","Anti-Stun","shield-alert")
+    AntiStunBox:AddToggle("Universal_AntiStun",{ Text="Anti-Stun", Default=false })
+    connect(RunService.Heartbeat,function()
+        if not Toggles.Universal_AntiStun.Value then return end
+        local hum=getHumanoid()
+        if hum and (hum.PlatformStand or hum:GetState()==Enum.HumanoidStateType.Stunned) then
+            if not isRagdolled(hum) then hum.PlatformStand=false; hum:ChangeState(Enum.HumanoidStateType.GettingUp) end
+        end
+    end)
+
+    local NoclipBox = addGroup(PlayerTab,"Left","Noclip","ghost")
+    local noclipParts={}; local noclipPrune=0
+    local function restoreNoclip() for part in noclipParts do if part.Parent then part.CanCollide=true end end; table.clear(noclipParts) end
+    Shared.restoreNoclip=restoreNoclip
+    NoclipBox:AddToggle("Universal_Noclip",{ Text="Noclip", Default=false, Callback=function(on) if not on then restoreNoclip() end end })
+    connect(RunService.Stepped,function(_,dt)
+        if not Toggles.Universal_Noclip.Value or Shared.flinging then return end
+        local c=LocalPlayer.Character; if not c then return end
+        for _,part in c:GetDescendants() do if part:IsA("BasePart") and part.CanCollide then noclipParts[part]=true; part.CanCollide=false end end
+        noclipPrune+=dt; if noclipPrune>5 then noclipPrune=0; for p in noclipParts do if not p.Parent then noclipParts[p]=nil end end end
+    end)
+
+    local FlyBox = addGroup(PlayerTab,"Right","Flying","plane")
+    local flyAtt,flyVel,flyConn=nil,nil,nil
+    local function stopFlying() if flyConn then flyConn:Disconnect(); flyConn=nil end; if flyVel then flyVel:Destroy(); flyVel=nil end; if flyAtt then flyAtt:Destroy(); flyAtt=nil end; local h=getHumanoid(); if h then h.PlatformStand=false end end
+    local function startFlying()
+        stopFlying(); local h=getHumanoid(); local root=getRoot(); if not h or not root then return end
+        h.PlatformStand=true; flyAtt=Instance.new("Attachment"); flyAtt.Parent=root
+        flyVel=Instance.new("LinearVelocity"); flyVel.Attachment0=flyAtt; flyVel.RelativeTo=Enum.ActuatorRelativeTo.World; flyVel.MaxForce=math.huge; flyVel.VectorVelocity=Vector3.zero; flyVel.Parent=flyAtt
+        flyConn=RunService.Heartbeat:Connect(function()
+            local hum=getHumanoid()
+            if not Toggles.Universal_Flying_Enabled.Value or not hum or hum.Health<=0 or not flyVel or not flyVel.Parent then stopFlying(); return end
+            local speed=Options.Universal_Fly_Speed.Value; local vert=0
+            if UserInputService:IsKeyDown(keyFromOption("Keybind_FlyUp") or Enum.KeyCode.Space) then vert+=1 end
+            if UserInputService:IsKeyDown(keyFromOption("Keybind_FlyDown") or Enum.KeyCode.LeftControl) then vert-=1 end
+            flyVel.VectorVelocity=(hum.MoveDirection*speed)+Vector3.new(0,vert*speed,0)
+        end)
+    end
+    FlyBox:AddToggle("Universal_Flying_Enabled",{ Text="Fly (keys set in Home)", Default=false, Callback=function(v) if v then startFlying() else stopFlying() end end })
+    FlyBox:AddSlider("Universal_Fly_Speed",     { Text="Fly Speed", Min=10, Max=300, Default=50, Rounding=0 })
+    connect(LocalPlayer.CharacterAdded,function() if Toggles.Universal_Flying_Enabled.Value then task.wait(1); startFlying() end end)
+    onCleanup(stopFlying)
+
+    local ExtraBox = addGroup(PlayerTab,"Right","Extra","settings")
+    ExtraBox:AddToggle("Universal_InfJump",{ Text="Infinite Jump", Default=false })
+    connect(UserInputService.JumpRequest,function()
+        if Toggles.Universal_InfJump.Value then local h=getHumanoid(); if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end end
+    end)
+    local defGrav=workspace.Gravity
+    ExtraBox:AddToggle("Universal_Gravity_Enabled",{ Text="Custom Gravity", Default=false, Callback=function(v) if not v then workspace.Gravity=defGrav end end })
+    ExtraBox:AddSlider("Universal_Gravity_Value",  { Text="Gravity", Min=0, Max=400, Default=196, Rounding=0 })
+    connect(RunService.Heartbeat,function() if Toggles.Universal_Gravity_Enabled.Value then workspace.Gravity=Options.Universal_Gravity_Value.Value end end)
+    onCleanup(function() workspace.Gravity=defGrav end)
+
+    local SafetyBox = addGroup(PlayerTab,"Right","Safety","shield")
+    SafetyBox:AddToggle("AntiVoid_Enabled",{ Text="Anti Void", Default=false })
+    local lastSafe=nil
+    task.spawn(function()
+        while not unloaded do
+            local h=getHumanoid(); local root=getRoot()
+            if Toggles.AntiVoid_Enabled.Value and h and root then
+                if h.FloorMaterial~=Enum.Material.Air then lastSafe=root.CFrame
+                elseif lastSafe and root.Position.Y<workspace.FallenPartsDestroyHeight+150 then root.AssemblyLinearVelocity=Vector3.zero; root.CFrame=lastSafe+Vector3.new(0,5,0) end
+            end
+            task.wait(0.1)
+        end
+    end)
+
+    local TeleportBox = addGroup(PlayerTab,"Left","Teleport","map-pin")
+    TeleportBox:AddDropdown("Teleport_Target",{ SpecialType="Player", ExcludeLocalPlayer=true, Text="Teleport Target" })
+    TeleportBox:AddButton({ Text="Teleport To Player", Func=function()
+        local target=resolvePlayer(Options.Teleport_Target.Value); if not target then Library:Notify("Pick a player first",4); return end
+        local myRoot=getRoot(); local tRoot=target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+        if not myRoot or not tRoot then Library:Notify("Couldn't find "..playerLabel(target).."'s character",4); return end
+        myRoot.CFrame=tRoot.CFrame+Vector3.new(0,3,0); Library:Notify("Teleported to "..playerLabel(target),3)
+    end })
+
+    local AttachBox = addGroup(PlayerTab,"Left","Attach To Player","link")
+    local spinAngle=0; local randomOffset=Vector3.new(0,0,3); local randomTimer=0
+    AttachBox:AddDropdown("Attach_Target",  { SpecialType="Player", ExcludeLocalPlayer=true, Text="Attach Target" })
+    AttachBox:AddDropdown("Attach_Position",{ Values={"Front","Back","Left","Right","Front Left","Front Right","Back Left","Back Right","Top","Bottom","Piggyback","Orbit","Vertical Orbit","Helix","Random"}, Default=2, Text="Attach Position" })
+    AttachBox:AddSlider("Attach_Distance",  { Text="Distance",    Min=1, Max=25, Default=3, Rounding=1, Suffix=" studs" })
+    AttachBox:AddSlider("Attach_SpinSpeed", { Text="Orbit Speed", Min=10, Max=720, Default=90, Rounding=0, Suffix=" deg/s" })
+    AttachBox:AddToggle("Attach_FaceTarget",{ Text="Face Target", Default=false })
+    AttachBox:AddToggle("Attach_Enabled",   { Text="Attach To Player", Default=false })
+    local function getAttachCF(tRoot,dt)
+        local pos=Options.Attach_Position.Value; local dist=Options.Attach_Distance.Value; local base=tRoot.CFrame; local center=tRoot.Position
+        local diag=dist*0.7071; local result=nil; local alwaysFace=false; local faceOk=true
+        spinAngle+=Options.Attach_SpinSpeed.Value*dt; local rad=math.rad(spinAngle)
+        if pos=="Front"          then result=base*CFrame.new(0,0,-dist)
+        elseif pos=="Back"       then result=base*CFrame.new(0,0,dist)
+        elseif pos=="Left"       then result=base*CFrame.new(-dist,0,0)
+        elseif pos=="Right"      then result=base*CFrame.new(dist,0,0)
+        elseif pos=="Front Left" then result=base*CFrame.new(-diag,0,-diag)
+        elseif pos=="Front Right"then result=base*CFrame.new(diag,0,-diag)
+        elseif pos=="Back Left"  then result=base*CFrame.new(-diag,0,diag)
+        elseif pos=="Back Right" then result=base*CFrame.new(diag,0,diag)
+        elseif pos=="Top"        then result=base*CFrame.new(0,dist,0); faceOk=false
+        elseif pos=="Bottom"     then result=base*CFrame.new(0,-dist,0); faceOk=false
+        elseif pos=="Piggyback"  then result=base*CFrame.new(0,dist*0.6,dist*0.35)
+        elseif pos=="Orbit"      then result=CFrame.new(center+Vector3.new(math.sin(rad)*dist,0,math.cos(rad)*dist)); alwaysFace=true
+        elseif pos=="Vertical Orbit" then result=CFrame.new(center+base.RightVector*(math.sin(rad)*dist)+base.UpVector*(math.cos(rad)*dist)); alwaysFace=true
+        elseif pos=="Helix"      then result=CFrame.new(center+Vector3.new(math.sin(rad)*dist,math.sin(rad*2)*dist*0.5,math.cos(rad)*dist)); alwaysFace=true
+        elseif pos=="Random"     then randomTimer+=dt; if randomTimer>=0.4 then randomTimer=0; local d=Vector3.new(math.random(-100,100),math.random(-30,100),math.random(-100,100)); if d.Magnitude<1 then d=Vector3.new(0,0,1) end; randomOffset=d.Unit*dist end; result=CFrame.new(center+randomOffset); alwaysFace=true
+        else result=base*CFrame.new(0,0,dist) end
+        if alwaysFace or (faceOk and Toggles.Attach_FaceTarget.Value) then result=CFrame.lookAt(result.Position,center) end
+        return result
+    end
+    connect(RunService.Heartbeat,function(dt)
+        if not Toggles.Attach_Enabled.Value or Shared.flinging then return end
+        local target=resolvePlayer(Options.Attach_Target.Value); local myRoot=getRoot(); local tRoot=target and target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+        if myRoot and tRoot then myRoot.CFrame=getAttachCF(tRoot,dt) end
+    end)
+
+    local SpecBox = addGroup(PlayerTab,"Right","Spectate","video")
+    local spectating=false; local spectateOverride=nil; local spectateYaw=0; local spectatePitch=math.rad(-12); local spectateDistance=12; local savedCamType=nil; local lastFocus=nil
+    local function currentSpecTarget() if spectateOverride and spectateOverride.Parent==Players then return spectateOverride end; return resolvePlayer(Options.Spectate_Target.Value) end
+    local function stopSpectate()
+        if not spectating then return end; spectating=false; pcall(function() RunService:UnbindFromRenderStep("ChillSpectate") end)
+        local cam=workspace.CurrentCamera; if cam then cam.CameraType=savedCamType or Enum.CameraType.Custom; local h=getHumanoid(); if h then cam.CameraSubject=h end end; savedCamType=nil
+    end
+    local function startSpectate()
+        local cam=workspace.CurrentCamera; if spectating or not cam then return end
+        if not currentSpecTarget() then Library:Notify("Pick a player to spectate first",3); Toggles.Spectate_Enabled:SetValue(false); return end
+        spectating=true; savedCamType=cam.CameraType; lastFocus=nil; spectateDistance=12
+        RunService:BindToRenderStep("ChillSpectate",Enum.RenderPriority.Camera.Value+2,function()
+            local c=workspace.CurrentCamera; if not c then return end
+            local plr=currentSpecTarget(); local char=plr and plr.Character; local root=char and char:FindFirstChild("HumanoidRootPart"); local h=char and char:FindFirstChildOfClass("Humanoid")
+            if Options.Spectate_Mode.Value=="Camera Subject" then if h then if c.CameraType~=Enum.CameraType.Custom then c.CameraType=Enum.CameraType.Custom end; if c.CameraSubject~=h then c.CameraSubject=h end end; return end
+            if root then lastFocus=root.Position+Vector3.new(0,2,0) end; if not lastFocus then return end
+            c.CameraType=Enum.CameraType.Scriptable
+            c.CFrame=CFrame.new(lastFocus)*CFrame.Angles(0,spectateYaw,0)*CFrame.Angles(spectatePitch,0,0)*CFrame.new(0,0,spectateDistance)
+        end)
+    end
+    SpecBox:AddDropdown("Spectate_Target",{ SpecialType="Player", ExcludeLocalPlayer=true, Text="Spectate Target", Callback=function() spectateOverride=nil end })
+    SpecBox:AddDropdown("Spectate_Mode",  { Values={"Orbit Camera","Camera Subject"}, Default=1, Text="Spectate Mode" })
+    SpecBox:AddToggle("Spectate_Enabled", { Text="Spectate Player", Default=false, Callback=function(v) if v then startSpectate() else stopSpectate() end end })
+    local function cycleSpec(step) local list={}; for _,p in Players:GetPlayers() do if p~=LocalPlayer then table.insert(list,p) end end; if #list==0 then Library:Notify("No other players",3); return end; table.sort(list,function(a,b) return a.Name<b.Name end); local cur=currentSpecTarget(); local idx=0; for i,p in list do if p==cur then idx=i end end; spectateOverride=list[((idx-1+step)%#list)+1]; Library:Notify("Spectating "..playerLabel(spectateOverride),2) end
+    local prevBtn=SpecBox:AddButton({ Text="Previous Player", Func=function() cycleSpec(-1) end })
+    prevBtn:AddButton({ Text="Next Player", Func=function() cycleSpec(1) end })
+    connect(UserInputService.InputChanged,function(input)
+        if not spectating then return end
+        if input.UserInputType==Enum.UserInputType.MouseMovement then
+            if UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then spectateYaw-=input.Delta.X*0.005; spectatePitch=math.clamp(spectatePitch-input.Delta.Y*0.005,-1.4,1.4) end
+        elseif input.UserInputType==Enum.UserInputType.MouseWheel then
+            spectateDistance=math.clamp(spectateDistance-input.Position.Z*2,3,100)
+        end
+    end)
+    onCleanup(stopSpectate)
+
+    -- Named Saved Positions (dropdown-based, no number nonsense)
+    local PosBox = addGroup(PlayerTab,"Right","Named Saved Positions","map-pin")
+    local savedPositions = {}  -- name → CFrame
+    PosBox:AddInput("Pos_NameInput",{ Text="Position Name", Default="", Numeric=false, Finished=false, Placeholder='e.g. "Base"' })
+    PosBox:AddDropdown("Pos_ListDropdown",{ Values={"(none)"}, Default=1, Text="Saved Positions" })
+
+    local function refreshPosDropdown()
+        local keys={}; for k in savedPositions do table.insert(keys,k) end
+        table.sort(keys)
+        if #keys==0 then keys={"(none)"} end
+        Options.Pos_ListDropdown:SetValues(keys); Options.Pos_ListDropdown:SetValue(keys[1])
+    end
+
+    PosBox:AddButton({ Text="💾 Save Position", Func=function()
+        local name=tostring(Options.Pos_NameInput.Value or ""):match("^%s*(.-)%s*$")
+        if name=="" then Library:Notify("Enter a name first",3); return end
+        local root=getRoot(); if not root then Library:Notify("No character",3); return end
+        savedPositions[name]=root.CFrame; refreshPosDropdown()
+        Library:Notify("Saved: "..name,2)
+    end })
+    PosBox:AddButton({ Text="🚀 Teleport to Selected", Func=function()
+        local sel=Options.Pos_ListDropdown.Value; local cf=savedPositions[sel]
+        if not cf then Library:Notify("No position selected",3); return end
+        local root=getRoot(); if not root then Library:Notify("No character",3); return end
+        root.AssemblyLinearVelocity=Vector3.zero; root.CFrame=cf; Library:Notify("→ "..sel,2)
+    end })
+    PosBox:AddButton({ Text="🗑 Delete Selected", Func=function()
+        local sel=Options.Pos_ListDropdown.Value
+        if savedPositions[sel] then savedPositions[sel]=nil; refreshPosDropdown(); Library:Notify("Deleted: "..sel,2)
+        else Library:Notify("Nothing to delete",3) end
+    end })
+    PosBox:AddButton({ Text="Clear All", Func=function()
+        savedPositions={}; refreshPosDropdown(); Library:Notify("All positions cleared",3)
+    end })
+end
+
+------------------------------------------------------------
+-- FUN TAB
+------------------------------------------------------------
+do
+    local GameBox=addGroup(FunTab,"Left","Mini Games","gamepad-2")
+    local HIGHSCORE_FILE="ChillhubDinoHighScore.txt"; local highScore=0
+    pcall(function() if type(isfile)=="function" and isfile(HIGHSCORE_FILE) then highScore=tonumber(readfile(HIGHSCORE_FILE)) or 0 end end)
+    local function saveHighScore() pcall(function() if type(writefile)=="function" then writefile(HIGHSCORE_FILE,tostring(highScore)) end end) end
+    local highLabel=GameBox:AddLabel("Best: "..tostring(highScore))
+    GameBox:AddSlider("Dino_Difficulty",{ Text="Dino Difficulty", Min=1, Max=5, Default=3, Rounding=0 })
+    local PLAY_W=600; local PLAY_H=180; local GROUND_Y=150; local DINO_X=48; local GRAVITY=2200; local JUMP_VEL=640; local FAST_FALL=3; local STAND_W=32; local STAND_H=36; local DUCK_W=44; local DUCK_H=22
+    local activeGame=nil
+    local function closeDino() if activeGame then activeGame.destroy(); activeGame=nil end end
+    local function getDinoParams() local d=Options.Dino_Difficulty and Options.Dino_Difficulty.Value or 3; if d<=1 then return{initSpeed=200,maxSpeed=500,mult=0.5} elseif d==2 then return{initSpeed=250,maxSpeed=620,mult=0.7} elseif d==3 then return{initSpeed=300,maxSpeed=760,mult=0.9} elseif d==4 then return{initSpeed=400,maxSpeed=980,mult=1.2} else return{initSpeed=500,maxSpeed=1200,mult=1.5} end end
+    local function openDino()
+        if activeGame then return end
+        local gui=Instance.new("ScreenGui"); gui.Name="ChillDinoRun"; gui.ResetOnSpawn=false; gui.DisplayOrder=50; gui.Parent=LocalPlayer:WaitForChild("PlayerGui")
+        local window=Instance.new("Frame"); window.Size=UDim2.fromOffset(PLAY_W,PLAY_H+28); window.Position=UDim2.new(0.5,-PLAY_W/2,0.5,-(PLAY_H+28)/2); window.BackgroundColor3=Color3.fromRGB(20,20,24); window.BorderSizePixel=0; window.ClipsDescendants=true; window.Parent=gui; Instance.new("UICorner",window).CornerRadius=UDim.new(0,8)
+        local titleBar=Instance.new("Frame"); titleBar.Size=UDim2.fromOffset(PLAY_W,28); titleBar.BackgroundColor3=Color3.fromRGB(34,34,42); titleBar.BorderSizePixel=0; titleBar.Parent=window
+        local title=Instance.new("TextLabel"); title.BackgroundTransparency=1; title.Position=UDim2.fromOffset(10,0); title.Size=UDim2.new(1,-50,1,0); title.Font=Enum.Font.GothamBold; title.TextSize=14; title.TextXAlignment=Enum.TextXAlignment.Left; title.TextColor3=Color3.fromRGB(235,235,240); title.Text="Dino Run 🎃  Space=jump  Down=duck"; title.Parent=titleBar
+        local closeButton=Instance.new("TextButton"); closeButton.Size=UDim2.fromOffset(28,28); closeButton.Position=UDim2.fromOffset(PLAY_W-28,0); closeButton.BackgroundTransparency=1; closeButton.Font=Enum.Font.GothamBold; closeButton.TextSize=16; closeButton.TextColor3=Color3.fromRGB(255,120,120); closeButton.Text="X"; closeButton.Parent=titleBar; closeButton.MouseButton1Click:Connect(closeDino)
+        local stopDrag=makeDraggable(titleBar,window)
+        local play=Instance.new("Frame"); play.Position=UDim2.fromOffset(0,28); play.Size=UDim2.fromOffset(PLAY_W,PLAY_H); play.BackgroundColor3=Color3.fromRGB(26,26,32); play.BorderSizePixel=0; play.ClipsDescendants=true; play.Active=true; play.Parent=window
+        local ground=Instance.new("Frame"); ground.Position=UDim2.fromOffset(0,GROUND_Y); ground.Size=UDim2.fromOffset(PLAY_W,2); ground.BackgroundColor3=Color3.fromRGB(120,120,130); ground.BorderSizePixel=0; ground.Parent=play
+        local scoreLabel=Instance.new("TextLabel"); scoreLabel.BackgroundTransparency=1; scoreLabel.Position=UDim2.fromOffset(PLAY_W-240,8); scoreLabel.Size=UDim2.fromOffset(230,20); scoreLabel.Font=Enum.Font.Code; scoreLabel.TextSize=16; scoreLabel.TextXAlignment=Enum.TextXAlignment.Right; scoreLabel.TextColor3=Color3.fromRGB(190,190,200); scoreLabel.Text=""; scoreLabel.Parent=play
+        local messageLabel=Instance.new("TextLabel"); messageLabel.BackgroundTransparency=1; messageLabel.Position=UDim2.fromOffset(0,46); messageLabel.Size=UDim2.fromOffset(PLAY_W,56); messageLabel.Font=Enum.Font.GothamBold; messageLabel.TextSize=18; messageLabel.TextColor3=Color3.fromRGB(235,235,240); messageLabel.Text=""; messageLabel.Parent=play
+        local clouds={}; for i=1,3 do local cy=24+(i%2)*28; local cloud=Instance.new("Frame"); cloud.BorderSizePixel=0; cloud.BackgroundColor3=Color3.fromRGB(46,46,56); cloud.Size=UDim2.fromOffset(46,12); cloud.Position=UDim2.fromOffset(i*200,cy); cloud.Parent=play; clouds[i]={frame=cloud,x=i*200,y=cy} end
+        local dinoFrame=Instance.new("Frame"); dinoFrame.BackgroundTransparency=1; dinoFrame.AnchorPoint=Vector2.new(0,1); dinoFrame.Parent=play
+        local function makePart2(color) local f=Instance.new("Frame"); f.BorderSizePixel=0; f.BackgroundColor3=color; f.Parent=dinoFrame; return f end
+        local DC=Color3.fromRGB(235,235,240); local body=makePart2(DC); local head=makePart2(DC); local tail=makePart2(DC); local legA=makePart2(DC); local legB=makePart2(DC); local eye=makePart2(Color3.fromRGB(20,20,24))
+        local function setRect(f,x,y,w,h) f.Position=UDim2.fromOffset(x,y); f.Size=UDim2.fromOffset(w,h) end
+        local function layoutDino(crouch,legStep)
+            if crouch then dinoFrame.Size=UDim2.fromOffset(DUCK_W,DUCK_H); setRect(body,4,4,30,12); setRect(head,28,2,16,10); setRect(eye,38,4,3,3); setRect(tail,0,6,6,5); setRect(legA,8,16,6,legStep and 6 or 4); setRect(legB,20,16,6,legStep and 4 or 6)
+            else dinoFrame.Size=UDim2.fromOffset(STAND_W,STAND_H); setRect(body,4,12,20,16); setRect(head,14,0,18,14); setRect(eye,26,3,3,3); setRect(tail,0,16,6,6); setRect(legA,6,28,6,legStep and 8 or 5); setRect(legB,16,28,6,legStep and 5 or 8) end
+        end
+        local state="ready"; local dinoH=0; local vy=0; local ducking=false; local score=0; local p=getDinoParams(); local speed=p.initSpeed; local obstacles={}; local nextSpawn=400; local runTimer=0; local stepFlag=false; local deadAt=0; local lastScoreInt=-1; local lastLayout=""
+        local function pad(n) return ("%05d"):format(math.floor(n)) end
+        local function updateScoreText() scoreLabel.Text="HI "..pad(highScore).."   "..pad(score) end
+        local function clearObstacles() for _,o in obstacles do o.frame:Destroy() end; table.clear(obstacles) end
+        local function resetGame() clearObstacles(); local np=getDinoParams(); score=0; speed=np.initSpeed; dinoH=0; vy=0; ducking=false; nextSpawn=400; runTimer=0; lastScoreInt=-1; lastLayout=""; updateScoreText() end
+        local function spawnObstacle()
+            local frame=Instance.new("Frame"); frame.BorderSizePixel=0; frame.Parent=play; local o
+            if score>250 and math.random()<0.3 then
+                local bottom=(math.random()<0.5) and 26 or 60; local y=GROUND_Y-bottom-18
+                frame.Size=UDim2.fromOffset(34,18); frame.BackgroundColor3=Color3.fromRGB(255,170,60); frame.Position=UDim2.fromOffset(PLAY_W+10,y)
+                local wing=Instance.new("Frame"); wing.BorderSizePixel=0; wing.BackgroundColor3=Color3.fromRGB(255,220,140); wing.Size=UDim2.fromOffset(14,6); wing.Position=UDim2.fromOffset(8,-6); wing.Parent=frame
+                o={frame=frame,x=PLAY_W+10,y=y,w=34,h=18,bird=true,wing=wing,flap=0}
+            else
+                local w=math.random(14,30); local h=math.random(30,52); local y=GROUND_Y-h
+                frame.Size=UDim2.fromOffset(w,h); frame.BackgroundColor3=Color3.fromRGB(80,190,110); frame.Position=UDim2.fromOffset(PLAY_W+10,y)
+                local aL=Instance.new("Frame"); aL.BorderSizePixel=0; aL.BackgroundColor3=frame.BackgroundColor3; aL.Size=UDim2.fromOffset(6,5); aL.Position=UDim2.fromOffset(-6,math.floor(h*0.35)); aL.Parent=frame
+                local aR=Instance.new("Frame"); aR.BorderSizePixel=0; aR.BackgroundColor3=frame.BackgroundColor3; aR.Size=UDim2.fromOffset(6,5); aR.Position=UDim2.fromOffset(w,math.floor(h*0.2)); aR.Parent=frame
+                o={frame=frame,x=PLAY_W+10,y=y,w=w,h=h,bird=false}
+            end
+            table.insert(obstacles,o)
+        end
+        local function isCrouching() return ducking and dinoH<=0 end
+        local function dinoRect() local w=STAND_W; local h=STAND_H; if isCrouching() then w=DUCK_W; h=DUCK_H end; return DINO_X+5,GROUND_Y-dinoH-h+3,DINO_X+w-5,GROUND_Y-dinoH-3 end
+        local function refreshDino() local crouch=isCrouching(); local ls=state=="running" and dinoH<=0 and stepFlag; local key=(crouch and "d" or "s")..(ls and "1" or "0"); if key~=lastLayout then lastLayout=key; layoutDino(crouch,ls) end; dinoFrame.Position=UDim2.fromOffset(DINO_X,GROUND_Y-dinoH) end
+        local function die() state="dead"; deadAt=os.clock(); local final=math.floor(score); if final>highScore then highScore=final; saveHighScore(); highLabel:SetText("Best: "..tostring(highScore)) end; updateScoreText(); messageLabel.Text="G A M E   O V E R\nSpace / click to restart" end
+        local function jump() if state=="ready" then state="running"; messageLabel.Text="" elseif state=="dead" then if os.clock()-deadAt>0.4 then resetGame(); state="running"; messageLabel.Text="" end; return end; if dinoH<=0 then vy=JUMP_VEL end end
+        local function step(dt)
+            dt=math.min(dt,0.05)
+            for _,cloud in clouds do cloud.x-=40*dt; if cloud.x<-60 then cloud.x=PLAY_W+math.random(20,120) end; cloud.frame.Position=UDim2.fromOffset(cloud.x,cloud.y) end
+            if state~="running" then refreshDino(); return end
+            if dinoH>0 or vy>0 then local g=GRAVITY; if ducking then g*=FAST_FALL end; vy-=g*dt; dinoH+=vy*dt; if dinoH<=0 then dinoH=0; vy=0 end end
+            runTimer+=dt; if runTimer>=0.1 then runTimer=0; stepFlag=not stepFlag end
+            local np=getDinoParams(); score+=speed*dt/40; speed=math.min(np.initSpeed+score*np.mult,np.maxSpeed)
+            local si=math.floor(score); if si~=lastScoreInt then lastScoreInt=si; updateScoreText() end
+            nextSpawn-=speed*dt; if nextSpawn<=0 then spawnObstacle(); nextSpawn=speed*(0.85+math.random()*0.75) end
+            refreshDino()
+            local dL,dT,dR,dB=dinoRect()
+            for i=#obstacles,1,-1 do
+                local o=obstacles[i]; o.x-=speed*dt; o.frame.Position=UDim2.fromOffset(o.x,o.y)
+                if o.bird then o.flap+=dt; o.wing.Position=UDim2.fromOffset(8,(o.flap%0.3<0.15) and -6 or 16) end
+                if o.x+o.w<-20 then o.frame:Destroy(); table.remove(obstacles,i)
+                else if dL<o.x+o.w-3 and dR>o.x+3 and dT<o.y+o.h-3 and dB>o.y+3 then die(); return end end
+            end
+        end
+        local actionName="ChillDinoInput"
+        local function handleAction(_,inputState,inputObject)
+            local code=inputObject.KeyCode
+            if inputState==Enum.UserInputState.Begin then if code==Enum.KeyCode.Space or code==Enum.KeyCode.Up or code==Enum.KeyCode.W then jump() elseif code==Enum.KeyCode.Down or code==Enum.KeyCode.S then ducking=true end
+            elseif inputState==Enum.UserInputState.End then if code==Enum.KeyCode.Down or code==Enum.KeyCode.S then ducking=false end end
+            return Enum.ContextActionResult.Sink
+        end
+        ContextActionService:BindActionAtPriority(actionName,handleAction,false,Enum.ContextActionPriority.High.Value,Enum.KeyCode.Space,Enum.KeyCode.Up,Enum.KeyCode.W,Enum.KeyCode.Down,Enum.KeyCode.S)
+        play.InputBegan:Connect(function(input) if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then jump() end end)
+        local conn=RunService.Heartbeat:Connect(step)
+        resetGame(); messageLabel.Text="Space / click to start"; refreshDino()
+        activeGame={destroy=function() conn:Disconnect(); stopDrag(); ContextActionService:UnbindAction(actionName); gui:Destroy() end}
+    end
+    GameBox:AddButton({ Text="Play Dino Run 🎃", Func=openDino })
+    GameBox:AddButton({ Text="Close Game",        Func=closeDino })
+    GameBox:AddButton({ Text="Reset Best Score",  Func=function() highScore=0; saveHighScore(); highLabel:SetText("Best: 0") end })
+    onCleanup(closeDino)
+
+    local FunBox=addGroup(FunTab,"Right","Character Fun","smile")
+    FunBox:AddToggle("Fun_Spin",     { Text="Spin",       Default=false, Callback=function(v) setAutoRotateLock("spin",v) end })
+    FunBox:AddSlider("Fun_SpinSpeed",{ Text="Spin Speed", Min=1, Max=40, Default=10, Rounding=0 })
+    connect(RunService.Heartbeat,function(dt)
+        if not Toggles.Fun_Spin.Value or isRagdolled(getHumanoid()) then return end
+        local root=getRoot(); if root then root.CFrame=root.CFrame*CFrame.Angles(0,math.rad(Options.Fun_SpinSpeed.Value*36)*dt,0) end
+    end)
+    onCleanup(function() setAutoRotateLock("spin",false) end)
+
+    local rainbowOrig={}
+    connect(LocalPlayer.CharacterAdded,function() table.clear(rainbowOrig) end)
+    FunBox:AddToggle("Fun_Rainbow",{ Text="Rainbow Character", Default=false, Callback=function(v) if not v then for part,col in rainbowOrig do if part.Parent then part.Color=col end; rainbowOrig[part]=nil end end end })
+    connect(RunService.Heartbeat,function()
+        if not Toggles.Fun_Rainbow.Value then return end
+        local c=LocalPlayer.Character; if not c then return end; local col=Color3.fromHSV((os.clock()*0.3)%1,0.8,1)
+        for _,part in c:GetDescendants() do if part:IsA("BasePart") and part.Name~="HumanoidRootPart" then if not rainbowOrig[part] then rainbowOrig[part]=part.Color end; part.Color=col end end
+    end)
+    local trailObj=nil
+    local function removeTrail() if trailObj then trailObj.trail:Destroy(); trailObj.a0:Destroy(); trailObj.a1:Destroy(); trailObj=nil end end
+    FunBox:AddToggle("Fun_Trail",{ Text="Character Trail", Default=false, Callback=function(v) if not v then removeTrail() end end }):AddColorPicker("Fun_TrailColor",{ Default=Color3.fromRGB(255,100,0), Title="Trail Color" })
+    FunBox:AddToggle("Fun_TrailRainbow",{ Text="Rainbow Trail", Default=false })
+    FunBox:AddSlider("Fun_TrailLifetime",{ Text="Trail Length", Min=0.2, Max=3, Default=0.9, Rounding=1, Suffix="s" })
+    FunBox:AddSlider("Fun_TrailWidth",   { Text="Trail Width",  Min=0.5, Max=6, Default=2.4, Rounding=1, Suffix=" studs" })
+    task.spawn(function()
+        while not unloaded do
+            if Toggles.Fun_Trail.Value then
+                local root=getRoot()
+                if root then
+                    if not trailObj or trailObj.root~=root or not trailObj.trail.Parent then
+                        removeTrail(); local a0=Instance.new("Attachment"); a0.Name="ChillTrailTop"; a0.Parent=root; local a1=Instance.new("Attachment"); a1.Name="ChillTrailBottom"; a1.Parent=root
+                        local trail=Instance.new("Trail"); trail.Name="ChillTrail"; trail.Attachment0=a0; trail.Attachment1=a1; trail.FaceCamera=true; trail.LightEmission=1; trail.LightInfluence=0; trail.MinLength=0.05; trail.Transparency=NumberSequence.new(0,1); trail.Enabled=true; trail.Parent=root
+                        trailObj={root=root,a0=a0,a1=a1,trail=trail}
+                    end
+                    local w=Options.Fun_TrailWidth.Value; trailObj.a0.Position=Vector3.new(0,w/2,0); trailObj.a1.Position=Vector3.new(0,-w/2,0); trailObj.trail.Lifetime=Options.Fun_TrailLifetime.Value
+                    if Toggles.Fun_TrailRainbow.Value then local hue=(os.clock()*0.4)%1; trailObj.trail.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromHSV(hue,0.9,1)),ColorSequenceKeypoint.new(0.5,Color3.fromHSV((hue+0.15)%1,0.9,1)),ColorSequenceKeypoint.new(1,Color3.fromHSV((hue+0.3)%1,0.9,1))})
+                    else trailObj.trail.Color=ColorSequence.new(Options.Fun_TrailColor.Value) end
+                end
+            end
+            task.wait(0.1)
+        end
+    end)
+    onCleanup(removeTrail)
+    FunBox:AddButton({ Text="Sit", Func=function() local h=getHumanoid(); if h then h.Sit=true end end })
+
+    local WorldFunBox=addGroup(FunTab,"Left","World Fun","sparkles")
+    local savedDisco=nil
+    WorldFunBox:AddToggle("Fun_Disco",{ Text="Disco Lighting 🎃", Default=false, Callback=function(v)
+        if v then savedDisco={Ambient=Lighting.Ambient,OutdoorAmbient=Lighting.OutdoorAmbient,ColorShift_Top=Lighting.ColorShift_Top,ColorShift_Bottom=Lighting.ColorShift_Bottom}
+        elseif savedDisco then for k,val in savedDisco do Lighting[k]=val end; savedDisco=nil end
+    end })
+    WorldFunBox:AddSlider("Fun_DiscoSpeed",{ Text="Disco Speed", Min=1, Max=10, Default=3, Rounding=0 })
+    connect(RunService.Heartbeat,function()
+        if not Toggles.Fun_Disco.Value then return end
+        local hue=(os.clock()*Options.Fun_DiscoSpeed.Value*0.1)%1; local col=Color3.fromHSV(hue,0.8,1)
+        Lighting.Ambient=col; Lighting.OutdoorAmbient=col; Lighting.ColorShift_Top=col; Lighting.ColorShift_Bottom=Color3.fromHSV((hue+0.5)%1,0.8,1)
+    end)
+    onCleanup(function() if savedDisco then for k,val in savedDisco do Lighting[k]=val end end end)
+end
+
+------------------------------------------------------------
+-- LOADER TAB
+------------------------------------------------------------
+do
+    local ExternalBox=addGroup(LoaderTab,"Left","External Scripts","terminal")
+    local function loadExternal(name,url) local ok,err=pcall(function() loadstring(game:HttpGet(url))() end); if ok then Library:Notify(name.." loaded",4) else Library:Notify("Failed: "..tostring(err),6) end end
+    ExternalBox:AddButton({ Text="Infinite Yield", Func=function() loadExternal("Infinite Yield","https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source") end })
+    ExternalBox:AddButton({ Text="Dex Explorer",   Func=function() loadExternal("Dex Explorer",  "https://raw.githubusercontent.com/infyiff/backup/main/dex.lua") end })
+    ExternalBox:AddButton({ Text="SimpleSpy",      Func=function() loadExternal("SimpleSpy",     "https://raw.githubusercontent.com/exxtremestuffs/SimpleSpySource/master/SimpleSpy.lua") end })
+end
+
+------------------------------------------------------------
+-- QUALITY OF LIFE TAB
+------------------------------------------------------------
+local themeUiReady=false
+do
+    local UtilBox=addGroup(QoLTab,"Left","Utility","wrench")
+    UtilBox:AddToggle("QoL_AntiAFK",{ Text="Anti AFK", Default=true })
+    connect(LocalPlayer.Idled,function() if Toggles.QoL_AntiAFK.Value then VirtualUser:CaptureController(); VirtualUser:ClickButton2(Vector2.new()) end end)
+    UtilBox:AddToggle("QoL_JoinLeave",{ Text="Join / Leave Notifications", Default=false })
+    connect(Players.PlayerAdded,   function(p) if Toggles.QoL_JoinLeave.Value then Library:Notify(playerLabel(p).." joined",3) end end)
+    connect(Players.PlayerRemoving,function(p) if Toggles.QoL_JoinLeave.Value then Library:Notify(playerLabel(p).." left",  3) end end)
+    UtilBox:AddToggle("QoL_FpsUnlock",{ Text="FPS Cap", Default=false, Callback=function(v) if type(setfpscap)~="function" then if v then Library:Notify("Your executor doesn't support setfpscap",4) end; return end; setfpscap(v and Options.QoL_FpsCap.Value or 60) end })
+    UtilBox:AddSlider("QoL_FpsCap",  { Text="FPS Cap Value", Min=60, Max=9999, Default=144, Rounding=0, Callback=function(v) if type(setfpscap)=="function" and Toggles.QoL_FpsUnlock and Toggles.QoL_FpsUnlock.Value then setfpscap(v) end end })
+    UtilBox:AddButton({ Text="Reset Character", Func=function() local h=getHumanoid(); if h then h.Health=0 end end })
+    UtilBox:AddButton({ Text="Copy Job ID",     Func=function() if copy(game.JobId) then Library:Notify("Job ID copied",3) else Library:Notify("Clipboard not supported",4) end end })
+    UtilBox:AddButton({ Text="Server Hop", Func=function()
+        Library:Notify("Searching for a server...",3)
+        task.spawn(function()
+            local ok,result=pcall(function() return HttpService:JSONDecode(game:HttpGet(("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100"):format(game.PlaceId))) end)
+            if not ok or not result or not result.data then Library:Notify("Couldn't fetch server list",5); return end
+            for _,server in result.data do if server.id~=game.JobId and server.playing<server.maxPlayers then TeleportService:TeleportToPlaceInstance(game.PlaceId,server.id,LocalPlayer); return end end
+            Library:Notify("No other servers found",4)
+        end)
+    end })
+
+    local ThemeBox=addGroup(QoLTab,"Left","Theme","palette")
+    local themeNames={"Default","BBot","Fatality","Jester","Mint","Tokyo Night","Ubuntu","Quartz"}
+    if okTheme and ThemeManager and type(ThemeManager.BuiltInThemes)=="table" then
+        local sorted={}; for name,data in pairs(ThemeManager.BuiltInThemes) do table.insert(sorted,{name=name,order=(type(data)=="table" and tonumber(data[1])) or 0}) end
+        if #sorted>0 then table.sort(sorted,function(a,b) return a.order<b.order end); themeNames={}; for _,e in sorted do table.insert(themeNames,e.name) end end
+    end
+    ThemeBox:AddDropdown("QoL_Theme",{ Values=themeNames, Default=6, Text="Theme", Callback=function(name)
+        if not themeUiReady then return end
+        if not(okTheme and ThemeManager) then Library:Notify("ThemeManager failed",4); return end
+        local list=Options.ThemeManager_ThemeList; if list and list.Value~=name then list:SetValue(name) else pcall(function() ThemeManager:ApplyTheme(name) end) end
+    end })
+
+    local CleanBox=addGroup(QoLTab,"Right","Visual Cleanup","sun")
+    local qolDisabledEff={}
+    CleanBox:AddToggle("QoL_NoEffects",{ Text="Remove Screen Effects", Default=false, Callback=function(on) for _,e in Lighting:GetChildren() do if e:IsA("PostEffect") then if on then if e.Enabled then qolDisabledEff[e]=true; e.Enabled=false end elseif qolDisabledEff[e] then e.Enabled=true; qolDisabledEff[e]=nil end end end end })
+    local savedClock=nil; CleanBox:AddToggle("QoL_AlwaysDay",{ Text="Always Day", Default=false, Callback=function(on) if on then savedClock=Lighting.ClockTime elseif savedClock then Lighting.ClockTime=savedClock; savedClock=nil end end })
+    local savedFog=nil;   CleanBox:AddToggle("QoL_NoFog",    { Text="Remove Fog",  Default=false, Callback=function(on) if on then savedFog=Lighting.FogEnd; Lighting.FogEnd=100000 elseif savedFog then Lighting.FogEnd=savedFog; savedFog=nil end end })
+    connect(RunService.Heartbeat,function() if Toggles.QoL_AlwaysDay.Value then Lighting.ClockTime=14 end; if Toggles.QoL_NoFog.Value and Lighting.FogEnd<100000 then Lighting.FogEnd=100000 end end)
+    CleanBox:AddToggle("QoL_HideChat",      { Text="Hide Chat",        Default=false, Callback=function(on) pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat,      not on) end) end })
+    CleanBox:AddToggle("QoL_HidePlayerList",{ Text="Hide Player List", Default=false, Callback=function(on) pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList,not on) end) end })
+    onCleanup(function() pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat,true); StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList,true) end) end)
+
+    local ServerBox=addGroup(QoLTab,"Right","Server Tools","server")
+    ServerBox:AddInput("QoL_JobId",{ Text="Job ID", Default="", Numeric=false, Finished=false, Placeholder="paste a Job ID" })
+    ServerBox:AddButton({ Text="Join Job ID", Func=function() local id=tostring(Options.QoL_JobId.Value or ""):gsub("%s+",""); if id=="" then Library:Notify("Paste a Job ID first",3); return end; local ok,err=pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId,id,LocalPlayer) end); if not ok then Library:Notify("Couldn't join: "..tostring(err),5) end end })
+    ServerBox:AddButton({ Text="Copy Place ID", Func=function() if copy(tostring(game.PlaceId)) then Library:Notify("Place ID copied",3) else Library:Notify("Clipboard not supported",4) end end })
+    ServerBox:AddToggle("QoL_AutoReconnect",{ Text="Auto Reconnect On Kick", Default=false })
+    task.spawn(function()
+        local ok,overlay=pcall(function() local g=game:GetService("CoreGui"):WaitForChild("RobloxPromptGui",10); return g and g:WaitForChild("promptOverlay",10) end)
+        if not ok or not overlay then return end
+        connect(overlay.ChildAdded,function(child) if child.Name=="ErrorPrompt" and Toggles.QoL_AutoReconnect.Value then task.wait(2); pcall(function() TeleportService:Teleport(game.PlaceId,LocalPlayer) end) end end)
+    end)
+    local InfoBox=addGroup(QoLTab,"Right","Game Info","info")
+    local gameLabel=InfoBox:AddLabel({ Text="Game: loading...", DoesWrap=true }); InfoBox:AddLabel("Place ID: "..tostring(game.PlaceId))
+    task.spawn(function() local mp=game:GetService("MarketplaceService"); local ok,info=pcall(function() return mp:GetProductInfoAsync(game.PlaceId) end); if ok and info then gameLabel:SetText("Game: "..tostring(info.Name)) else gameLabel:SetText("Game: unknown") end end)
+end
+
+------------------------------------------------------------
+-- SETTINGS TAB
+------------------------------------------------------------
+do
+    local MenuGroup=addGroup(SettingsTab,"Right","Menu","menu")
+    MenuGroup:AddButton({ Text="Turn Off All Features", Func=function()
+        local names={"XRay_Enabled","Fullbright_Enabled","LowQuality_Enabled","Camera_UnlockZoom","Fun_Disco","Fun_Rainbow","Fun_Spin","Fun_Trail","Universal_Noclip","Universal_Flying_Enabled","Universal_Speed_Enabled","Universal_Jump_Enabled","Universal_Gravity_Enabled","Universal_InfJump","Spectate_Enabled","Attach_Enabled","AntiVoid_Enabled","QoL_NoEffects","QoL_AlwaysDay","QoL_NoFog","Dash_Enabled","Dash_Tracker","Combat_Safezone_Enabled","FlingAura_Enabled","LethalDash_Enabled","TouchFling_Enabled","Universal_AntiStun","Aurora_Custom_Enabled","Macro_Backdash1_Enabled","Macro_Backdash2_Enabled","Macro_Backdash3_Enabled","Macro_Backdash4_Enabled"}
+        for _,name in names do local t=Toggles[name]; if t then pcall(function() t:SetValue(false) end) end end
+        Library:Notify("All features turned off",3)
+    end })
+    MenuGroup:AddButton({ Text="Unload Script", Func=function() Library:Unload() end })
+    pcall(function() MenuGroup:AddToggle("KeybindMenuOpen",{ Default=Library.KeybindFrame.Visible, Text="Show Keybind List", Callback=function(v) Library.KeybindFrame.Visible=v end }) end)
+    pcall(function() MenuGroup:AddDropdown("NotificationSide",{ Values={"Left","Right"}, Default="Right", Text="Notification Side", Callback=function(v) Library:SetNotifySide(v) end }) end)
+    pcall(function() MenuGroup:AddDropdown("DPIDropdown",{ Values={"50%","75%","100%","125%","150%","175%","200%"}, Default="100%", Text="DPI Scale", Callback=function(v) local dpi=tonumber((v:gsub("%%",""))); if dpi then Library:SetDPIScale(dpi) end end }) end)
+
+    Library:OnUnload(function()
+        unloaded=true
+        for _,c in connections do pcall(function() c:Disconnect() end) end
+        for _,fn in cleanupFns do pcall(fn) end
+    end)
+
+    if okTheme and ThemeManager then ThemeManager:SetLibrary(Library); ThemeManager:SetFolder("ChillhubTSB"); ThemeManager:ApplyToTab(SettingsTab)
+    else warn("[Chillhub] ThemeManager failed:",ThemeManager) end
+    if okSave and SaveManager then
+        SaveManager:SetLibrary(Library); if okTheme then SaveManager:IgnoreThemeSettings() end
+        SaveManager:SetIgnoreIndexes({"MenuKeybind","QoL_Theme"}); SaveManager:SetFolder("ChillhubTSB"); SaveManager:BuildConfigSection(SettingsTab); SaveManager:LoadAutoloadConfig()
+    else warn("[Chillhub] SaveManager failed:",SaveManager) end
+end
+
+themeUiReady=true
+end -- buildUI
+
+local okBuild,buildErr=xpcall(buildUI,function(e) return tostring(e).."\n"..debug.traceback() end)
+if not okBuild then
+    warn("[Chillhub] UI build failed:",buildErr)
+    pcall(function() Loading:ShowErrorPage(true); Loading:SetErrorMessage("Failed to build the UI, check the console (F9) for details.") end)
+    return
+end
+
+pcall(function() Loading:SetCurrentStep(4); Loading:Continue() end)
+Library:Notify("Chillhub v17 loaded 🎃",6)
