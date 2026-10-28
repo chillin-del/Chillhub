@@ -4,6 +4,9 @@ local SCRIPT_HUB = {
     [18687417158] = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/Forsaken",
     [10449761463] = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/tsb",
     [131048399685555] = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/tsb", -- TSB VC Servers
+    [9015014224] = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/Slap%20battles",
+    [6403373529] = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/Slap%20battles",
+    [11520107397] = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/Slap%20battles",
 }
 
 local UNIVERSAL_URL = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/Universal"
