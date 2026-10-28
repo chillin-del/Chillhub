@@ -1,0 +1,2978 @@
+------------------------------------------------------------
+-- EDIT ME
+------------------------------------------------------------
+local UPDATE_VERSION = "Release"
+local UPDATE_NOTES   = "Candy corn farm, only works in Halloween.\nGlove equip, choose any owned glove.\nPlayer ESP, see players through walls.\nSlap aura, slaps everyone in range.\nSelf slap farm, auto slaps you.\nSlapple farm, auto collects slapples.\nDaily reward, claims your daily reward.\nMovement, fly, speed, jump, noclip, and teleport."
+
+------------------------------------------------------------
+-- SERVICES
+------------------------------------------------------------
+local RunService          = game:GetService("RunService")
+local Players             = game:GetService("Players")
+local UserInputService    = game:GetService("UserInputService")
+local Lighting            = game:GetService("Lighting")
+local ContextActionService= game:GetService("ContextActionService")
+local TeleportService     = game:GetService("TeleportService")
+local ReplicatedStorage   = game:GetService("ReplicatedStorage")
+
+local LocalPlayer   = Players.LocalPlayer
+local SITE_URL      = "https://chillhuboffical.netlify.app/"
+local LOGO_ASSET_ID = "rbxassetid://83288538700579"
+local ACCENT        = Color3.fromRGB(255, 100, 0)
+
+------------------------------------------------------------
+-- CLEAN PREVIOUS INSTANCE
+------------------------------------------------------------
+pcall(function()
+    if type(getgenv().ChillhubUnload) == "function" then
+        getgenv().ChillhubUnload()
+    end
+end)
+pcall(function()
+    local old = getgenv().Library
+    if old and type(old) == "table" and type(old.Unload) == "function" and not old.Unloaded then
+        old:Unload()
+    end
+end)
+getgenv().ChillhubLoaded = false
+getgenv().Library = nil
+
+------------------------------------------------------------
+-- LOAD UI LIBRARY
+------------------------------------------------------------
+local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+local okLib, Library = pcall(function() return loadstring(game:HttpGet(repo.."Library.lua"))() end)
+if not okLib or not Library then error("[Chillhub] failed to load UI library: "..tostring(Library)) end
+
+local okTheme, ThemeManager = pcall(function() return loadstring(game:HttpGet(repo.."addons/ThemeManager.lua"))() end)
+local okSave,  SaveManager  = pcall(function() return loadstring(game:HttpGet(repo.."addons/SaveManager.lua"))() end)
+
+local Options = Library.Options
+local Toggles = Library.Toggles
+
+pcall(function()
+    Library.Scheme.AccentColor = ACCENT
+    getgenv().Library = Library
+end)
+
+------------------------------------------------------------
+-- LOADING SCREEN
+------------------------------------------------------------
+local Loading = Library:CreateLoading({ Title="Chillhub Slap Battles", Icon=LOGO_ASSET_ID, TotalSteps=3 })
+task.delay(90, function() pcall(function() Loading:Destroy() end) end)
+Loading:SetMessage("Loading Chillhub Slap Battles")
+Loading:SetDescription("i love you"); task.wait(1)
+Loading:SetCurrentStep(1); Loading:SetDescription("Loading ya save fileeee"); task.wait(1)
+Loading:SetCurrentStep(2); Loading:ShowSidebarPage(true)
+Loading.Sidebar:AddLabel("User: "..LocalPlayer.Name)
+    Loading.Sidebar:AddLabel(UPDATE_VERSION); task.wait(1)
+Loading:SetCurrentStep(3); Loading:SetDescription("Ready!"); task.wait(0.6)
+
+pcall(function()
+    Library.Scheme.AccentColor = ACCENT
+    Library:UpdateColorsUsingRegistry()
+end)
+
+------------------------------------------------------------
+-- HELPERS
+------------------------------------------------------------
+local unloaded    = false
+local connections = {}
+local cleanupFns  = {}
+
+local function connect(signal, fn) local c = signal:Connect(fn); connections[#connections+1] = c; return c end
+local function onCleanup(fn) cleanupFns[#cleanupFns+1] = fn end
+local function getHumanoid() local c = LocalPlayer.Character; return c and c:FindFirstChildOfClass("Humanoid") end
+local function getRoot()     local c = LocalPlayer.Character; return c and c:FindFirstChild("HumanoidRootPart") end
+
+local function isRagdolled(humanoid)
+    if not humanoid then return false end
+    local flyToggle = Toggles.Universal_Flying_Enabled
+    local flying = flyToggle and flyToggle.Value
+    if humanoid.PlatformStand and not flying then return true end
+    if flying then return false end
+    local s = humanoid:GetState()
+    return s == Enum.HumanoidStateType.Ragdoll
+        or s == Enum.HumanoidStateType.FallingDown
+        or s == Enum.HumanoidStateType.Physics
+        or s == Enum.HumanoidStateType.PlatformStanding
+end
+
+------------------------------------------------------------
+-- SHARED LOCAL STEALTH
+-- Hides the character on this client only. Other players still
+-- receive your character from the server, so this cannot make
+-- you invisible to them. It only removes visual clutter locally.
+------------------------------------------------------------
+local Shared = {}
+do
+    local hideReasons = {}
+    local hidePartOrig = setmetatable({}, { __mode = "k" })
+    local hideDecalOrig = setmetatable({}, { __mode = "k" })
+    local hideFxOrig = setmetatable({}, { __mode = "k" })
+    local hideHumOrig = setmetatable({}, { __mode = "k" })
+
+    local function hideApply()
+        local char = LocalPlayer.Character
+        if not char then return end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            if hideHumOrig[hum] == nil then
+                hideHumOrig[hum] = {
+                    DisplayDistanceType = hum.DisplayDistanceType,
+                    HealthDisplayType = hum.HealthDisplayType,
+                    NameDisplayDistance = hum.NameDisplayDistance,
+                    HealthDisplayDistance = hum.HealthDisplayDistance,
+                }
+            end
+            pcall(function()
+                hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+                hum.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
+                hum.NameDisplayDistance = 0
+                hum.HealthDisplayDistance = 0
+            end)
+        end
+        for _, d in ipairs(char:GetDescendants()) do
+            if d:IsA("BasePart") then
+                if hidePartOrig[d] == nil then
+                    hidePartOrig[d] = { Transparency = d.Transparency, CastShadow = d.CastShadow }
+                end
+                pcall(function()
+                    d.Transparency = 1
+                    d.CastShadow = false
+                end)
+            elseif d:IsA("Decal") or d:IsA("Texture") then
+                if hideDecalOrig[d] == nil then hideDecalOrig[d] = d.Transparency end
+                pcall(function() d.Transparency = 1 end)
+            elseif d:IsA("Highlight") or d:IsA("BillboardGui") or d:IsA("ParticleEmitter")
+                or d:IsA("Trail") or d:IsA("Beam") or d:IsA("Fire") or d:IsA("Smoke") or d:IsA("Sparkles") then
+                if hideFxOrig[d] == nil then hideFxOrig[d] = d.Enabled end
+                pcall(function() d.Enabled = false end)
+            end
+        end
+    end
+
+    local function hideRestore()
+        for d, v in pairs(hidePartOrig) do
+            if d.Parent then
+                pcall(function()
+                    d.Transparency = v.Transparency
+                    d.CastShadow = v.CastShadow
+                end)
+            end
+        end
+        for d, v in pairs(hideDecalOrig) do
+            if d.Parent then pcall(function() d.Transparency = v end) end
+        end
+        for d, v in pairs(hideFxOrig) do
+            if d.Parent then pcall(function() d.Enabled = v end) end
+        end
+        for hum, v in pairs(hideHumOrig) do
+            if hum.Parent then
+                pcall(function()
+                    hum.DisplayDistanceType = v.DisplayDistanceType
+                    hum.HealthDisplayType = v.HealthDisplayType
+                    hum.NameDisplayDistance = v.NameDisplayDistance
+                    hum.HealthDisplayDistance = v.HealthDisplayDistance
+                end)
+            end
+        end
+        table.clear(hidePartOrig)
+        table.clear(hideDecalOrig)
+        table.clear(hideFxOrig)
+        table.clear(hideHumOrig)
+    end
+
+    function Shared.setHidden(reason, on)
+        if on then hideReasons[reason] = true else hideReasons[reason] = nil end
+        if next(hideReasons) ~= nil then hideApply() else hideRestore() end
+    end
+    function Shared.isHidden()
+        return next(hideReasons) ~= nil
+    end
+
+    local hideClock = 0
+    connect(RunService.Heartbeat, function(dt)
+        if next(hideReasons) == nil then return end
+        hideClock += dt
+        if hideClock < 0.35 then return end
+        hideClock = 0
+        hideApply()
+    end)
+    onCleanup(function()
+        table.clear(hideReasons)
+        hideRestore()
+    end)
+end
+
+------------------------------------------------------------
+-- SAFE SPOT / ANTI-VOID
+-- The old anti-void pushed you to Y=60 at your current X/Z
+-- whenever you dropped below -30, which happens all the time
+-- on the lower islands, so you bounced upward forever over
+-- the void. This version remembers the last solid ground you
+-- stood on and puts you back there. Farms can also hold you
+-- at a spot high above the lobby so hits cannot knock you off.
+------------------------------------------------------------
+local SafeSpot = {}
+do
+    local holdReasons   = {}
+    local holdCFrame    = nil
+    local returnCFrame  = nil
+    local lastSafeCFrame = nil
+    local lastSafeClock = 0
+    local anchoredRoot  = nil
+    local voidCooldown  = 0
+
+    local VOID_Y   = -1200
+    local LIFT     = 600
+    local SAFE_OFF = 6
+
+    local function lobbySpawnCFrame()
+        local lobby = workspace:FindFirstChild("Lobby")
+        local sp = lobby and lobby:FindFirstChild("SpawnLocation", true)
+        if sp and sp:IsA("BasePart") then
+            return CFrame.new(sp.Position + Vector3.new(0, SAFE_OFF, 0))
+        end
+        return nil
+    end
+
+    local function fallbackCFrame()
+        return lobbySpawnCFrame() or CFrame.new(0, 1000, 0)
+    end
+
+    local function farmSpotCFrame()
+        local base = lastSafeCFrame or lobbySpawnCFrame()
+        if not base then return CFrame.new(0, 1000, 0) end
+        return CFrame.new(base.Position + Vector3.new(0, LIFT, 0))
+    end
+
+    local function zeroVelocity(root)
+        pcall(function()
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+        end)
+    end
+
+    local function releaseAnchor()
+        if anchoredRoot then
+            pcall(function() anchoredRoot.Anchored = false end)
+            anchoredRoot = nil
+        end
+    end
+
+    function SafeSpot.hold(reason, spot)
+        if next(holdReasons) == nil then
+            returnCFrame = lastSafeCFrame
+            holdCFrame = spot or farmSpotCFrame()
+        end
+        holdReasons[reason] = true
+    end
+
+    function SafeSpot.release(reason)
+        holdReasons[reason] = nil
+        if next(holdReasons) ~= nil then return end
+        holdCFrame = nil
+        releaseAnchor()
+        local target = returnCFrame
+        returnCFrame = nil
+        local root = getRoot()
+        if target and root then
+            zeroVelocity(root)
+            pcall(function() root.CFrame = CFrame.new(target.Position + Vector3.new(0, SAFE_OFF, 0)) end)
+        end
+    end
+
+    function SafeSpot.isHolding()
+        return next(holdReasons) ~= nil
+    end
+
+    function SafeSpot.getLastSafe()
+        return lastSafeCFrame
+    end
+
+    function SafeSpot.teleportToSafety()
+        local root = getRoot()
+        local hum = getHumanoid()
+        if not root or not hum or hum.Health <= 0 then return end
+        local target = lastSafeCFrame or fallbackCFrame()
+        zeroVelocity(root)
+        pcall(function() root.CFrame = CFrame.new(target.Position + Vector3.new(0, SAFE_OFF, 0)) end)
+    end
+
+    connect(RunService.Heartbeat, function(dt)
+        local root = getRoot()
+        local hum = getHumanoid()
+
+        if not root or not hum or hum.Health <= 0 then
+            releaseAnchor()
+            return
+        end
+
+        if next(holdReasons) ~= nil then
+            if not holdCFrame then holdCFrame = farmSpotCFrame() end
+            if anchoredRoot ~= root then
+                releaseAnchor()
+                anchoredRoot = root
+            end
+            pcall(function() root.Anchored = true end)
+            zeroVelocity(root)
+            pcall(function() root.CFrame = holdCFrame end)
+            return
+        end
+
+        releaseAnchor()
+
+        local now = os.clock()
+        if root.Position.Y > VOID_Y + 100 and hum.FloorMaterial ~= Enum.Material.Air then
+            if now - lastSafeClock >= 0.25 then
+                lastSafeClock = now
+                lastSafeCFrame = root.CFrame
+            end
+        end
+
+        voidCooldown = math.max(0, voidCooldown - dt)
+        if root.Position.Y < VOID_Y and voidCooldown <= 0 then
+            voidCooldown = 1.5
+            SafeSpot.teleportToSafety()
+        end
+    end)
+
+    onCleanup(function()
+        table.clear(holdReasons)
+        holdCFrame = nil
+        returnCFrame = nil
+        releaseAnchor()
+    end)
+end
+
+local baseWalkSpeed  = setmetatable({}, { __mode = "k" })
+local baseJump       = setmetatable({}, { __mode = "k" })
+local baseAutoRotate = setmetatable({}, { __mode = "k" })
+
+local function captureBaseline(h)
+    if not h then return end
+    if baseWalkSpeed[h] == nil then baseWalkSpeed[h] = h.WalkSpeed end
+    if baseJump[h] == nil then
+        baseJump[h] = {
+            UseJumpPower = h.UseJumpPower,
+            JumpPower = h.JumpPower,
+            JumpHeight = h.JumpHeight,
+        }
+    end
+    if baseAutoRotate[h] == nil then baseAutoRotate[h] = h.AutoRotate end
+end
+
+local autoRotateLocks = {}
+local function applyAutoRotate(h)
+    h = h or getHumanoid()
+    if not h then return end
+    captureBaseline(h)
+    if next(autoRotateLocks) ~= nil then
+        h.AutoRotate = false
+    else
+        h.AutoRotate = baseAutoRotate[h] ~= false
+    end
+end
+local function setAutoRotateLock(name, locked)
+    autoRotateLocks[name] = locked or nil
+    applyAutoRotate()
+end
+
+connect(LocalPlayer.CharacterAdded, function(char)
+    local h = char:WaitForChild("Humanoid", 10)
+    if h then
+        captureBaseline(h)
+        applyAutoRotate(h)
+    end
+end)
+captureBaseline(getHumanoid())
+onCleanup(function()
+    table.clear(autoRotateLocks)
+    local h = getHumanoid()
+    if h then h.AutoRotate = baseAutoRotate[h] ~= false end
+end)
+
+local function resolvePlayer(v)
+    if typeof(v) == "Instance" then return v end
+    if type(v) == "string" then return Players:FindFirstChild(v) end
+    return nil
+end
+
+local function playerLabel(plr)
+    if not plr then return "?" end
+    if plr.DisplayName ~= plr.Name then return plr.DisplayName.." ("..plr.Name..")" end
+    return plr.Name
+end
+
+local function keyFromOption(name)
+    local opt = Options[name]
+    if not opt then return nil end
+    local v = opt.Value
+    if type(v) ~= "string" then return nil end
+    local ok, key = pcall(function() return Enum.KeyCode:FromName(v) end)
+    if ok then return key end
+    return nil
+end
+
+local function addGroup(tab, side, name, icon)
+    if tab.AddGroupbox then
+        local ok, box = pcall(function() return tab:AddGroupbox({Side=side,Name=name,IconName=icon}) end)
+        if ok and box then return box end
+    end
+    if side == "Left" then return tab:AddLeftGroupbox(name, icon) end
+    return tab:AddRightGroupbox(name, icon)
+end
+
+local function copy(text)
+    local ok = pcall(function() setclipboard(tostring(text)) end)
+    return ok
+end
+
+local function makeDraggable(frame, moveTarget)
+    moveTarget = moveTarget or frame; frame.Active = true
+    local dragging, dragStart, startPos = false, nil, nil
+    frame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true; dragStart = input.Position; startPos = moveTarget.Position
+            input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
+        end
+    end)
+    local c = connect(UserInputService.InputChanged, function(input)
+        if not dragging then return end
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            local delta = input.Position - dragStart
+            moveTarget.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset+delta.X, startPos.Y.Scale, startPos.Y.Offset+delta.Y)
+        end
+    end)
+    return function() c:Disconnect() end
+end
+
+------------------------------------------------------------
+-- BUILD UI
+------------------------------------------------------------
+local function buildUI()
+
+local Window = Library:CreateWindow({
+    Title         = "Chillhub Slap Battles",
+    Footer        = "Home | Player | Auto Farm | Fun | Slaping | Game | QoL | Settings",
+    Center        = true,
+    AutoShow      = true,
+    Icon          = LOGO_ASSET_ID,
+})
+
+pcall(function()
+    Library.Scheme.AccentColor = ACCENT
+    Library:UpdateColorsUsingRegistry()
+end)
+
+local HomeTab     = Window:AddTab("Home",      "home")
+local PlayerTab   = Window:AddTab("Player",    "user")
+local AutoFarmTab = Window:AddTab("Auto Farm", "zap")
+local FunTab      = Window:AddTab("Fun",       "party-popper")
+local SlapTab     = Window:AddTab("Slaping",   "zap")
+local GameTab     = Window:AddTab("Game",      "gamepad-2")
+local QoLTab      = Window:AddTab("QoL",       "sparkles")
+local SettingsTab = Window:AddTab("Settings",  "settings")
+
+------------------------------------------------------------
+-- HOME TAB
+------------------------------------------------------------
+do
+    local HomeBox = addGroup(HomeTab, "Left", "Home Options", "home")
+    HomeBox:AddLabel("owner, ilovemygfhehe123 :3 🎃")
+    HomeBox:AddButton({ Text="Join Discord", Func=function() copy("Discord.gg/Nf8GNVYGF"); Library:Notify("Discord invite copied!", 5) end })
+    HomeBox:AddButton({ Text="Youtube", Func=function() copy("https://www.youtube.com/@Chillhubofficalchannel"); Library:Notify("Youtube link copied!", 5) end })
+    HomeBox:AddButton({ Text="Tiktok", Func=function() copy("https://www.tiktok.com/@justachillguywithagf"); Library:Notify("Tiktok link copied!", 5) end })
+    HomeBox:AddButton({ Text="Roblox", Func=function() copy("https://www.roblox.com/users/11725638566/profile"); Library:Notify("Roblox profile link copied!", 5) end })
+    HomeBox:AddButton({ Text="Website", Func=function()
+        if copy(SITE_URL) then Library:Notify("Website link copied!", 3)
+        else Library:Notify("Clipboard not supported by your executor", 4) end
+    end })
+
+    local UpdateBox = addGroup(HomeTab, "Left", UPDATE_VERSION ~= "" and UPDATE_VERSION or "Release", "megaphone")
+    UpdateBox:AddLabel({ Text=UPDATE_NOTES ~= "" and UPDATE_NOTES or "Update notes go here.", DoesWrap=true })
+
+    local KeysBox = addGroup(HomeTab, "Right", "Default Keybinds", "keyboard")
+    local function addKeybind(label, id, default, mode)
+        KeysBox:AddLabel(label):AddKeyPicker(id, { Default=default, NoUI=true, Mode=mode or "Hold", Text=label })
+    end
+    KeysBox:AddLabel("Open / Close Menu"):AddKeyPicker("MenuKeybind", { Default="P", NoUI=true, Mode="Toggle", Text="Open / Close Menu" })
+    pcall(function() Library.ToggleKeybind = Options.MenuKeybind end)
+    addKeybind("Fly Up", "Keybind_FlyUp", "Space")
+    addKeybind("Fly Down", "Keybind_FlyDown", "LeftControl")
+
+    local RejoinBox = addGroup(HomeTab, "Right", "Rejoin", "refresh-cw")
+    local function doRejoin()
+        local ok, err = pcall(function()
+            if game.JobId ~= "" then
+                TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+            else
+                TeleportService:Teleport(game.PlaceId, LocalPlayer)
+            end
+        end)
+        if not ok then Library:Notify("Rejoin failed: "..tostring(err), 5) end
+    end
+    RejoinBox:AddToggle("AutoRejoin_Enabled", { Text="Auto Rejoin", Default=false })
+    RejoinBox:AddInput("AutoRejoin_Minutes", { Text="Rejoin after (minutes)", Default="19", Numeric=true, Finished=false, Placeholder="1-60" })
+    RejoinBox:AddButton({ Text="Rejoin Now", Func=doRejoin })
+
+    task.spawn(function()
+        local elapsed = 0
+        while not unloaded do
+            task.wait(1)
+            local toggle = Toggles.AutoRejoin_Enabled
+            if toggle and toggle.Value then
+                elapsed += 1
+                local mins = math.max(1, tonumber(Options.AutoRejoin_Minutes and Options.AutoRejoin_Minutes.Value) or 19)
+                if elapsed >= mins * 60 then
+                    elapsed = 0
+                    doRejoin()
+                end
+            else
+                elapsed = 0
+            end
+        end
+    end)
+end
+
+------------------------------------------------------------
+-- PLAYER TAB
+------------------------------------------------------------
+do
+    ----------------------------------------------------------
+    -- SPEED
+    ----------------------------------------------------------
+    local SpeedBox = addGroup(PlayerTab, "Left", "Speed", "gauge")
+    local function restoreSpeed()
+        local h = getHumanoid()
+        if h then h.WalkSpeed = baseWalkSpeed[h] or 16 end
+    end
+    SpeedBox:AddToggle("Universal_Speed_Enabled", { Text="Speed Hack", Default=false, Callback=function(on)
+        local h = getHumanoid()
+        if on then
+            captureBaseline(h)
+            if h then h.WalkSpeed = tonumber(Options.Universal_Speed_Value.Value) or 16 end
+        else
+            restoreSpeed()
+        end
+    end })
+    SpeedBox:AddInput("Universal_Speed_Value", { Text="Walk Speed", Default="16", Numeric=true, Finished=false, Placeholder="16-200" })
+    connect(RunService.Heartbeat, function()
+        local toggle = Toggles.Universal_Speed_Enabled
+        if not (toggle and toggle.Value) then return end
+        local h = getHumanoid()
+        if not h then return end
+        captureBaseline(h)
+        h.WalkSpeed = tonumber(Options.Universal_Speed_Value.Value) or 16
+    end)
+    onCleanup(restoreSpeed)
+
+    ----------------------------------------------------------
+    -- JUMP
+    ----------------------------------------------------------
+    local JumpBox = addGroup(PlayerTab, "Left", "Jump", "arrow-up")
+    local function restoreJump()
+        local h = getHumanoid()
+        local b = h and baseJump[h]
+        if h and b then
+            h.UseJumpPower = b.UseJumpPower
+            h.JumpPower = b.JumpPower
+            h.JumpHeight = b.JumpHeight
+        end
+    end
+    JumpBox:AddToggle("Universal_Jump_Enabled", { Text="Jump Power Hack", Default=false, Callback=function(on)
+        local h = getHumanoid()
+        if on then
+            captureBaseline(h)
+            if h then
+                if not h.UseJumpPower then h.UseJumpPower = true end
+                h.JumpPower = tonumber(Options.Universal_Jump_Value.Value) or 50
+            end
+        else
+            restoreJump()
+        end
+    end })
+    JumpBox:AddInput("Universal_Jump_Value", { Text="Jump Power", Default="50", Numeric=true, Finished=false, Placeholder="50-300" })
+    connect(RunService.Heartbeat, function()
+        local toggle = Toggles.Universal_Jump_Enabled
+        if not (toggle and toggle.Value) then return end
+        local h = getHumanoid()
+        if not h then return end
+        captureBaseline(h)
+        if not h.UseJumpPower then h.UseJumpPower = true end
+        h.JumpPower = tonumber(Options.Universal_Jump_Value.Value) or 50
+    end)
+    onCleanup(restoreJump)
+
+    ----------------------------------------------------------
+    -- NOCLIP
+    ----------------------------------------------------------
+    local NoclipBox = addGroup(PlayerTab, "Left", "Noclip", "ghost")
+    local noclipTouched = {}   -- part -> original CanCollide (only parts that were solid)
+    local noclipCache = {}
+    local noclipPrune = 0
+    local function noclipRefresh()
+        table.clear(noclipCache)
+        local c = LocalPlayer.Character
+        if not c then return end
+        for _, part in ipairs(c:GetDescendants()) do
+            if part:IsA("BasePart") then noclipCache[#noclipCache+1] = part end
+        end
+    end
+    local function restoreNoclip()
+        for part, value in pairs(noclipTouched) do
+            if part.Parent then pcall(function() part.CanCollide = value end) end
+        end
+        table.clear(noclipTouched)
+        table.clear(noclipCache)
+    end
+    NoclipBox:AddToggle("Universal_Noclip", { Text="Noclip", Default=false, Callback=function(on)
+        if on then noclipRefresh() else restoreNoclip() end
+    end })
+    connect(RunService.Stepped, function(_, dt)
+        local toggle = Toggles.Universal_Noclip
+        if not (toggle and toggle.Value) then return end
+        if #noclipCache == 0 then noclipRefresh() end
+        local stale = false
+        for i = 1, #noclipCache do
+            local part = noclipCache[i]
+            if part.Parent then
+                if part.CanCollide then
+                    noclipTouched[part] = true
+                    part.CanCollide = false
+                end
+            else
+                stale = true
+            end
+        end
+        if stale then noclipRefresh() end
+        noclipPrune += dt
+        if noclipPrune > 1 then
+            noclipPrune = 0
+            for p in pairs(noclipTouched) do
+                if not p.Parent then noclipTouched[p] = nil end
+            end
+        end
+    end)
+    connect(LocalPlayer.CharacterAdded, function()
+        table.clear(noclipCache)
+        table.clear(noclipTouched)
+    end)
+    onCleanup(restoreNoclip)
+
+    ----------------------------------------------------------
+    -- TELEPORT
+    ----------------------------------------------------------
+    local TeleportBox = addGroup(PlayerTab, "Left", "Teleport", "map-pin")
+    TeleportBox:AddDropdown("Teleport_Target", { SpecialType="Player", ExcludeLocalPlayer=true, Text="Teleport Target" })
+    TeleportBox:AddButton({ Text="Teleport To Player", Func=function()
+        local target = resolvePlayer(Options.Teleport_Target.Value)
+        if not target then Library:Notify("Pick a player first", 4); return end
+        local myRoot = getRoot()
+        local tRoot = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+        if not myRoot or not tRoot then Library:Notify("Couldn't find "..playerLabel(target).."'s character", 4); return end
+        myRoot.AssemblyLinearVelocity = Vector3.zero
+        myRoot.CFrame = tRoot.CFrame + Vector3.new(0, 3, 0)
+        Library:Notify("Teleported to "..playerLabel(target), 3)
+    end })
+
+    ----------------------------------------------------------
+    -- FLYING
+    ----------------------------------------------------------
+    local FlyBox = addGroup(PlayerTab, "Right", "Flying", "plane")
+    FlyBox:AddInput("Universal_Fly_Speed", { Text="Fly Speed", Default="50", Numeric=true, Finished=false, Placeholder="10-300" })
+
+    local flyAtt, flyVel, flyConn = nil, nil, nil
+    local flyPrevPlatformStand = nil
+    local function stopFlying()
+        if flyConn then flyConn:Disconnect(); flyConn = nil end
+        if flyVel then flyVel:Destroy(); flyVel = nil end
+        if flyAtt then flyAtt:Destroy(); flyAtt = nil end
+        local h = getHumanoid()
+        if h then h.PlatformStand = flyPrevPlatformStand == true end
+        flyPrevPlatformStand = nil
+    end
+    local function startFlying()
+        local toggle = Toggles.Universal_Flying_Enabled
+        if not (toggle and toggle.Value) then return end
+        stopFlying()
+        if not (toggle and toggle.Value) then return end
+        local h = getHumanoid()
+        local root = getRoot()
+        if not h or not root or h.Health <= 0 then return end
+        flyPrevPlatformStand = h.PlatformStand
+        h.PlatformStand = true
+        flyAtt = Instance.new("Attachment"); flyAtt.Parent = root
+        flyVel = Instance.new("LinearVelocity")
+        flyVel.Attachment0 = flyAtt
+        flyVel.RelativeTo = Enum.ActuatorRelativeTo.World
+        flyVel.MaxForce = math.huge
+        flyVel.VectorVelocity = Vector3.zero
+        flyVel.Parent = flyAtt
+        flyConn = RunService.Heartbeat:Connect(function()
+            local hum = getHumanoid()
+            if not Toggles.Universal_Flying_Enabled.Value or not hum or hum.Health <= 0 or not flyVel or not flyVel.Parent then
+                stopFlying()
+                return
+            end
+            local speed = tonumber(Options.Universal_Fly_Speed.Value) or 50
+            local vert = 0
+            if UserInputService:IsKeyDown(keyFromOption("Keybind_FlyUp") or Enum.KeyCode.Space) then vert += 1 end
+            if UserInputService:IsKeyDown(keyFromOption("Keybind_FlyDown") or Enum.KeyCode.LeftControl) then vert -= 1 end
+            flyVel.VectorVelocity = (hum.MoveDirection * speed) + Vector3.new(0, vert * speed, 0)
+        end)
+    end
+    FlyBox:AddToggle("Universal_Flying_Enabled", { Text="Fly (keys set in Home)", Default=false, Callback=function(v) if v then startFlying() else stopFlying() end end })
+    connect(LocalPlayer.CharacterAdded, function()
+        if Toggles.Universal_Flying_Enabled and Toggles.Universal_Flying_Enabled.Value then
+            task.wait(1)
+            startFlying()
+        end
+    end)
+    onCleanup(stopFlying)
+
+    ----------------------------------------------------------
+    -- INVISIBILITY (local only)
+    ----------------------------------------------------------
+    local InvisBox = addGroup(PlayerTab, "Right", "Invisibility", "eye-off")
+    InvisBox:AddToggle("Invis_Enabled", { Text="Invisible (local only)", Default=false, Callback=function(on)
+        Shared.setHidden("player", on)
+    end })
+    InvisBox:AddLabel({ Text="Local only: other players can still see you. Hiding your character does not stop the server or other clients from seeing where you are.", DoesWrap=true })
+
+    ----------------------------------------------------------
+    -- ATTACH TO PLAYER
+    ----------------------------------------------------------
+    local AttachBox = addGroup(PlayerTab, "Right", "Attach To Player", "link")
+    local spinAngle = 0; local randomOffset = Vector3.new(0, 0, 3); local randomTimer = 0
+    AttachBox:AddDropdown("Attach_Target", { SpecialType="Player", ExcludeLocalPlayer=true, Text="Attach Target" })
+    AttachBox:AddDropdown("Attach_Position", { Values={"Front","Back","Left","Right","Front Left","Front Right","Back Left","Back Right","Top","Bottom","Piggyback","Orbit","Vertical Orbit","Helix","Random"}, Default=2, Text="Attach Position" })
+    AttachBox:AddInput("Attach_Distance",  { Text="Distance (studs)", Default="3", Numeric=true, Finished=false, Placeholder="1-25" })
+    AttachBox:AddInput("Attach_SpinSpeed", { Text="Orbit Speed (deg/s)", Default="90", Numeric=true, Finished=false, Placeholder="10-720" })
+    AttachBox:AddToggle("Attach_FaceTarget", { Text="Face Target", Default=false })
+    AttachBox:AddToggle("Attach_Enabled", { Text="Attach To Player", Default=false })
+
+    local function getAttachCF(tRoot, dt)
+        local pos = Options.Attach_Position.Value
+        local dist = math.clamp(tonumber(Options.Attach_Distance.Value) or 3, 0.5, 100)
+        local base = tRoot.CFrame; local center = tRoot.Position
+        local diag = dist * 0.7071; local result = nil; local alwaysFace = false; local faceOk = true
+        spinAngle += (tonumber(Options.Attach_SpinSpeed.Value) or 90) * dt
+        local rad = math.rad(spinAngle)
+        if pos == "Front" then result = base * CFrame.new(0, 0, -dist)
+        elseif pos == "Back" then result = base * CFrame.new(0, 0, dist)
+        elseif pos == "Left" then result = base * CFrame.new(-dist, 0, 0)
+        elseif pos == "Right" then result = base * CFrame.new(dist, 0, 0)
+        elseif pos == "Front Left" then result = base * CFrame.new(-diag, 0, -diag)
+        elseif pos == "Front Right" then result = base * CFrame.new(diag, 0, -diag)
+        elseif pos == "Back Left" then result = base * CFrame.new(-diag, 0, diag)
+        elseif pos == "Back Right" then result = base * CFrame.new(diag, 0, diag)
+        elseif pos == "Top" then result = base * CFrame.new(0, dist, 0); faceOk = false
+        elseif pos == "Bottom" then result = base * CFrame.new(0, -dist, 0); faceOk = false
+        elseif pos == "Piggyback" then result = base * CFrame.new(0, dist*0.6, dist*0.35)
+        elseif pos == "Orbit" then result = CFrame.new(center + Vector3.new(math.sin(rad)*dist, 0, math.cos(rad)*dist)); alwaysFace = true
+        elseif pos == "Vertical Orbit" then result = CFrame.new(center + base.RightVector*(math.sin(rad)*dist) + base.UpVector*(math.cos(rad)*dist)); alwaysFace = true
+        elseif pos == "Helix" then result = CFrame.new(center + Vector3.new(math.sin(rad)*dist, math.sin(rad*2)*dist*0.5, math.cos(rad)*dist)); alwaysFace = true
+        elseif pos == "Random" then
+            randomTimer += dt
+            if randomTimer >= 0.4 then
+                randomTimer = 0
+                local d = Vector3.new(math.random(-100,100), math.random(-30,100), math.random(-100,100))
+                if d.Magnitude < 1 then d = Vector3.new(0,0,1) end
+                randomOffset = d.Unit * dist
+            end
+            result = CFrame.new(center + randomOffset); alwaysFace = true
+        else result = base * CFrame.new(0, 0, dist) end
+        if alwaysFace or (faceOk and Toggles.Attach_FaceTarget and Toggles.Attach_FaceTarget.Value) then
+            result = CFrame.lookAt(result.Position, center)
+        end
+        return result
+    end
+    connect(RunService.Heartbeat, function(dt)
+        if not Toggles.Attach_Enabled or not Toggles.Attach_Enabled.Value then return end
+        local h = getHumanoid()
+        if not h or h.Health <= 0 then return end
+        local target = resolvePlayer(Options.Attach_Target.Value)
+        local myRoot = getRoot()
+        local tRoot = target and target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+        if myRoot and tRoot then myRoot.CFrame = getAttachCF(tRoot, dt) end
+    end)
+
+    ----------------------------------------------------------
+    -- SPECTATE
+    ----------------------------------------------------------
+    local SpecBox = addGroup(PlayerTab, "Right", "Spectate", "video")
+    local spectating = false; local spectateOverride = nil; local spectateYaw = 0
+    local spectatePitch = math.rad(-12); local spectateDistance = 12
+    local savedCamType = nil; local lastFocus = nil
+    local function currentSpecTarget()
+        if spectateOverride and spectateOverride.Parent == Players then return spectateOverride end
+        return resolvePlayer(Options.Spectate_Target.Value)
+    end
+    local function stopSpectate()
+        if not spectating then return end
+        spectating = false
+        pcall(function() RunService:UnbindFromRenderStep("ChillSpectate") end)
+        local cam = workspace.CurrentCamera
+        if cam then
+            cam.CameraType = savedCamType or Enum.CameraType.Custom
+            local h = getHumanoid(); if h then cam.CameraSubject = h end
+        end
+        savedCamType = nil
+    end
+    local function startSpectate()
+        local cam = workspace.CurrentCamera
+        if spectating or not cam then return end
+        if not currentSpecTarget() then
+            Library:Notify("Pick a player to spectate first", 3)
+            if Toggles.Spectate_Enabled then Toggles.Spectate_Enabled:SetValue(false) end
+            return
+        end
+        spectating = true; savedCamType = cam.CameraType; lastFocus = nil; spectateDistance = 12
+        RunService:BindToRenderStep("ChillSpectate", Enum.RenderPriority.Camera.Value + 2, function()
+            local c = workspace.CurrentCamera; if not c then return end
+            local plr = currentSpecTarget(); local char = plr and plr.Character
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            local h = char and char:FindFirstChildOfClass("Humanoid")
+            if Options.Spectate_Mode and Options.Spectate_Mode.Value == "Camera Subject" then
+                if h then
+                    if c.CameraType ~= Enum.CameraType.Custom then c.CameraType = Enum.CameraType.Custom end
+                    if c.CameraSubject ~= h then c.CameraSubject = h end
+                end
+                return
+            end
+            if root then lastFocus = root.Position + Vector3.new(0, 2, 0) end
+            if not lastFocus then return end
+            c.CameraType = Enum.CameraType.Scriptable
+            c.CFrame = CFrame.new(lastFocus) * CFrame.Angles(0, spectateYaw, 0) * CFrame.Angles(spectatePitch, 0, 0) * CFrame.new(0, 0, spectateDistance)
+        end)
+    end
+    SpecBox:AddDropdown("Spectate_Target", { SpecialType="Player", ExcludeLocalPlayer=true, Text="Spectate Target", Callback=function() spectateOverride = nil end })
+    SpecBox:AddDropdown("Spectate_Mode", { Values={"Orbit Camera","Camera Subject"}, Default=1, Text="Spectate Mode" })
+    SpecBox:AddToggle("Spectate_Enabled", { Text="Spectate Player", Default=false, Callback=function(v) if v then startSpectate() else stopSpectate() end end })
+    local function cycleSpec(step)
+        local list = {}
+        for _, p in ipairs(Players:GetPlayers()) do if p ~= LocalPlayer then table.insert(list, p) end end
+        if #list == 0 then Library:Notify("No other players", 3); return end
+        table.sort(list, function(a, b) return a.Name < b.Name end)
+        local cur = currentSpecTarget(); local idx = 0
+        for i, p in ipairs(list) do if p == cur then idx = i end end
+        spectateOverride = list[((idx - 1 + step) % #list) + 1]
+        Library:Notify("Spectating "..playerLabel(spectateOverride), 2)
+    end
+    local prevBtn = SpecBox:AddButton({ Text="Previous Player", Func=function() cycleSpec(-1) end })
+    prevBtn:AddButton({ Text="Next Player", Func=function() cycleSpec(1) end })
+    connect(UserInputService.InputChanged, function(input)
+        if not spectating then return end
+        if input.UserInputType == Enum.UserInputType.MouseMovement then
+            if UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+                spectateYaw -= input.Delta.X * 0.005
+                spectatePitch = math.clamp(spectatePitch - input.Delta.Y * 0.005, -1.4, 1.4)
+            end
+        elseif input.UserInputType == Enum.UserInputType.MouseWheel then
+            spectateDistance = math.clamp(spectateDistance - input.Position.Z * 2, 3, 100)
+        end
+    end)
+    onCleanup(stopSpectate)
+
+    ----------------------------------------------------------
+    -- EXTRA
+    ----------------------------------------------------------
+    local ExtraBox = addGroup(PlayerTab, "Right", "Extra", "settings")
+    ExtraBox:AddToggle("Universal_InfJump", { Text="Infinite Jump", Default=false })
+    connect(UserInputService.JumpRequest, function()
+        if Toggles.Universal_InfJump and Toggles.Universal_InfJump.Value then
+            local h = getHumanoid(); if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
+        end
+    end)
+
+    local gravitySaved = nil
+    ExtraBox:AddToggle("Universal_Gravity_Enabled", { Text="Custom Gravity", Default=false, Callback=function(v)
+        if v then
+            if gravitySaved == nil then gravitySaved = workspace.Gravity end
+            workspace.Gravity = tonumber(Options.Universal_Gravity_Value.Value) or 196
+        elseif gravitySaved ~= nil then
+            workspace.Gravity = gravitySaved
+            gravitySaved = nil
+        end
+    end })
+    ExtraBox:AddInput("Universal_Gravity_Value", { Text="Gravity", Default="196", Numeric=true, Finished=false, Placeholder="0-400" })
+    local gravT = 0
+    connect(RunService.Heartbeat, function(dt)
+        if not Toggles.Universal_Gravity_Enabled or not Toggles.Universal_Gravity_Enabled.Value then return end
+        gravT += dt; if gravT < 0.25 then return end; gravT = 0
+        local want = tonumber(Options.Universal_Gravity_Value.Value) or 196
+        if workspace.Gravity ~= want then workspace.Gravity = want end
+    end)
+    onCleanup(function()
+        if gravitySaved ~= nil then workspace.Gravity = gravitySaved end
+    end)
+
+    ----------------------------------------------------------
+    -- NAMED SAVED POSITIONS
+    ----------------------------------------------------------
+    local PosBox = addGroup(PlayerTab, "Right", "Named Saved Positions", "map-pin")
+    local savedPositions = {}
+    PosBox:AddInput("Pos_NameInput", { Text="Position Name", Default="", Numeric=false, Finished=false, Placeholder='e.g. "Base"' })
+    PosBox:AddDropdown("Pos_ListDropdown", { Values={"(none)"}, Default=1, Text="Saved Positions" })
+
+    local function refreshPosDropdown()
+        local keys = {}
+        for k in pairs(savedPositions) do table.insert(keys, k) end
+        table.sort(keys)
+        if #keys == 0 then keys = {"(none)"} end
+        Options.Pos_ListDropdown:SetValues(keys)
+        Options.Pos_ListDropdown:SetValue(keys[1])
+    end
+
+    PosBox:AddButton({ Text="Save Position", Func=function()
+        local name = tostring(Options.Pos_NameInput.Value or ""):match("^%s*(.-)%s*$")
+        if name == "" then Library:Notify("Enter a name first", 3); return end
+        local root = getRoot(); if not root then Library:Notify("No character", 3); return end
+        savedPositions[name] = root.CFrame
+        refreshPosDropdown()
+        Library:Notify("Saved: "..name, 2)
+    end })
+    PosBox:AddButton({ Text="Teleport to Selected", Func=function()
+        local sel = Options.Pos_ListDropdown.Value
+        local cf = savedPositions[sel]
+        if not cf then Library:Notify("No position selected", 3); return end
+        local root = getRoot(); if not root then Library:Notify("No character", 3); return end
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.CFrame = cf
+        Library:Notify("-> "..sel, 2)
+    end })
+    PosBox:AddButton({ Text="Delete Selected", Func=function()
+        local sel = Options.Pos_ListDropdown.Value
+        if savedPositions[sel] then
+            savedPositions[sel] = nil
+            refreshPosDropdown()
+            Library:Notify("Deleted: "..sel, 2)
+        else Library:Notify("Nothing to delete", 3) end
+    end })
+    PosBox:AddButton({ Text="Clear All", Func=function()
+        savedPositions = {}
+        refreshPosDropdown()
+        Library:Notify("All positions cleared", 3)
+    end })
+
+end
+
+------------------------------------------------------------
+-- AUTO FARM TAB
+------------------------------------------------------------
+do
+    -- stop the old standalone candy farm if it is still loaded
+    if getgenv().CandyCornFarmCleanup then
+        pcall(getgenv().CandyCornFarmCleanup)
+        getgenv().CandyCornFarmCleanup = nil
+    end
+
+    local CandyConf = { Delay = 0.1, TouchTime = 0.1 }
+
+    local FarmBox = addGroup(AutoFarmTab, "Left", "Candy Corn Farm", "candy")
+    FarmBox:AddLabel({ Text="WARNING: Using this farm can get you banned.", DoesWrap=true })
+    FarmBox:AddToggle("CandyFarm_Enabled", { Text="Auto Farm Candy Corn", Default=false })
+    FarmBox:AddToggle("CandyFarm_Stealth", { Text="Hide character locally (does not hide from others)", Default=true })
+    FarmBox:AddInput("CandyFarm_Delay", { Text="Item Wait (ms)", Default="100", Numeric=true, Finished=false, Placeholder="50-1000", Callback=function(v)
+        CandyConf.Delay = math.clamp((tonumber(v) or 100) / 1000, 0.05, 5)
+    end })
+    local candyLabel = FarmBox:AddLabel("Candy Corn: 0")
+    local candyStatus = FarmBox:AddLabel("Status: idle")
+    FarmBox:AddLabel({ Text="Loops through every candy in workspace.CandyCorns, disables its collision, moves it onto your HumanoidRootPart for 0.1s, then restores it and moves to the next. This farm does not teleport you. The loop repeats after 0.5s. Anti-void is always on.", DoesWrap=true })
+
+    local StatsBox = addGroup(AutoFarmTab, "Right", "Stats", "activity")
+    StatsBox:AddLabel("Farm runs while Auto Farm is on.")
+    StatsBox:AddLabel("Moves each candy onto your character.")
+    StatsBox:AddLabel("Candy farm does not teleport you.")
+    StatsBox:AddLabel("Anti-void is always on.")
+    StatsBox:AddLabel("Stops when you turn the toggle off.")
+
+    local SlapConf = { SlapDelay = 0.1, SlappleDelay = 0.05 }
+    local SlapRemotes = {
+        Bubble = "BubbleHit",
+        Golden = "GoldenHit",
+        Potato = "potatohit",
+        Ghost = "GhostHit",
+        Duelist = "DuelistHit",
+        Shard = "ShardHIT",
+        Magnet = "MagnetHIT",
+        Pusher = "PusherHit",
+        Error = "Errorhit",
+        Speedrun = "Speedrunhit",
+        Conveyor = "ConvHit",
+        ["Za Hando"] = "zhramt",
+        Slapple = "SlappleHit",
+        Mitten = "MittenHit",
+        Spin = "spinhit",
+        Dice = "DiceHit",
+        Warp = "WarpHt",
+        Pylon = "PylonHit",
+        CULT = "CULTHit",
+        Detonator = "DetonatorHit",
+        STOP = "STOP",
+        Cloud = "CloudHit",
+        Jupiter = "CelestialHit",
+        Rob = "robhit",
+        Buddies = "buddiesHIT",
+        Reaper = "ReaperHit",
+        Sparky = "HtStun",
+        bull = "BullHit",
+        Plague = "PlagueHit",
+        Hybrid = "HybridCLAP",
+        Kinetic = "HtStun",
+        Dream = "DreamHit",
+        Dominance = "DominanceHit",
+        Defense = "DefenseHit",
+        Disarm = "DisarmH",
+        Adios = "hitAdios",
+        Thor = "ThorHit",
+        Acrobat = "AcHit",
+        Diamond = "DiamondHit",
+        Brick = "BrickHit",
+        Reverse = "ReverseHit",
+        Boomerang = "BoomerangH",
+        Mail = "MailHit",
+        Phase = "PhaseH",
+        Bomb = "BombHit",
+        Nightmare = "nightmarehit",
+        ["The Flex"] = "FlexHit",
+        Snow = "SnowHit",
+        Killstreak = "KSHit",
+        Spy = "SpyHit",
+        ["Hallow Jack"] = "HallowHIT",
+        Jet = "JetHit",
+        Custom = "CustomHit",
+        Null = "NullHit",
+        ["Untitled Tag Glove"] = "UTGHit",
+        Shukuchi = "ShukuchiHit",
+        Recall = "HtStun",
+        Hitman = "HitmanHit",
+        Pinky = "PinkyHit",
+        Anchor = "hitAnchor",
+        Rojo = "RojoHit",
+        Blocked = "BlockedHit",
+        Coil = "HtStun",
+        Trap = "traphi",
+        Phantom = "PhantomHit",
+        Rage = "GRRRR",
+        Wormhole = "WormHit",
+        Rhythm = "rhythmhit",
+        Fort = "Fort",
+        Balloony = "HtStun",
+        Leafblower = "LeafblowerHit",
+        Orbit = "Orbihit",
+        Boogie = "HtStun",
+        Bus = "hitbus",
+        ["God's Hand"] = "Godshand",
+        Replica = "ReplicaHit",
+        Poltergeist = "UTGHit",
+        Ice = "IceHit",
+        Flash = "FlashHit",
+        Moon = "CelestialHit",
+        Extended = "b",
+        Spring = "springhit",
+        MR = "MisterHit",
+        Woah = "woahHit",
+        Megarock = "DiamondHit",
+        Rocky = "RockyHit",
+        Retro = "RetroHit",
+        Swapper = "HitSwapper",
+        ["[REDACTED]"] = "ReHit",
+        Bob = "bobhit",
+        Engineer = "engiehit",
+        Default = "b",
+        Space = "HtSpace",
+        OVERKILL = "Overkillhit",
+        OtherGloves = "GeneralHit",
+        Stun = "HtStun",
+        ZZZZZZZ = "ZZZZZZZHit",
+        Link = "LinkHit",
+        Pull = "PullHit",
+        Slap = "GeneralHit",
+    }
+    getgenv().ChillhubSlapRemotes = SlapRemotes
+
+    local SelfSlapBox = addGroup(AutoFarmTab, "Left", "Self Slap Farm", "hand")
+    SelfSlapBox:AddLabel({ Text="WARNING: Using this farm can get you banned.", DoesWrap=true })
+    SelfSlapBox:AddToggle("SelfSlapFarm_Enabled", { Text="Auto Self Slap", Default=false })
+    SelfSlapBox:AddInput("SelfSlapFarm_Delay", { Text="Slap Delay (ms)", Default="100", Numeric=true, Finished=false, Placeholder="50-1000", Callback=function(v)
+        SlapConf.SlapDelay = math.clamp((tonumber(v) or 100) / 1000, 0.05, 5)
+    end })
+    SelfSlapBox:AddDropdown("SelfSlapFarm_Part", { Values={"Head","Torso"}, Default=1, Text="Hit Part" })
+    local selfSlapGloveLabel = SelfSlapBox:AddLabel("Glove: -")
+    local selfSlapStatus = SelfSlapBox:AddLabel("Status: idle")
+    SelfSlapBox:AddLabel({ Text="Uses your current glove and fires the matching BadgeHub slap remote at the selected part of your own character. While this is on you are teleported to a safe spot 600 studs above your last solid ground and held there, so knockback and the void cannot kill you. Unknown gloves fall back to GeneralHit. Default and Extended use b, Replica uses ReplicaHit, Reverse uses ReverseHit, Slapple uses SlappleHit, Moon uses CelestialHit, and the rest use the same remote names as BadgeHub.", DoesWrap=true })
+
+    local SlappleBox = addGroup(AutoFarmTab, "Left", "Slapple Farm", "apple")
+    SlappleBox:AddLabel({ Text="WARNING: Using this farm can get you banned.", DoesWrap=true })
+    SlappleBox:AddToggle("SlappleFarm_Enabled", { Text="Auto Collect Slapples", Default=false })
+    SlappleBox:AddToggle("SlappleFarm_Golden", { Text="Include Golden Slapple", Default=true })
+    SlappleBox:AddToggle("SlappleFarm_AutoEnter", { Text="Auto Enter Arena", Default=true })
+    SlappleBox:AddInput("SlappleFarm_Delay", { Text="Pass Delay (ms)", Default="50", Numeric=true, Finished=false, Placeholder="20-1000", Callback=function(v)
+        SlapConf.SlappleDelay = math.clamp((tonumber(v) or 50) / 1000, 0.02, 5)
+    end })
+    local slappleStatus = SlappleBox:AddLabel("Status: idle")
+    SlappleBox:AddLabel({ Text="Touches every Slapple in Workspace.Arena.island5.Slapples from your HumanoidRootPart with firetouchinterest. Your character does not move. Auto Enter moves Teleport1 onto your HumanoidRootPart until the arena loads, then restores it. Touches only count while you are in the arena.", DoesWrap=true })
+
+    local SlapStatsBox = addGroup(AutoFarmTab, "Right", "Slap Stats", "swords")
+    local gloveStatLabel = SlapStatsBox:AddLabel("Glove: -")
+    local remoteStatLabel = SlapStatsBox:AddLabel("Remote: -")
+    local slapsStatLabel = SlapStatsBox:AddLabel("Slaps: 0")
+    local arenaStatLabel = SlapStatsBox:AddLabel("Arena: no")
+
+    local function candyFolder()
+        return workspace:FindFirstChild("CandyCorns")
+    end
+
+    local function isFarmActive()
+        if unloaded then return false end
+        local toggle = Toggles.CandyFarm_Enabled
+        if not toggle or not toggle.Value then return false end
+        local hum = getHumanoid()
+        return hum ~= nil and hum.Health > 0
+    end
+
+    local selfSlapLast = ""
+    local slappleLast = ""
+
+    local function setSelfSlapStatus(text)
+        if text ~= selfSlapLast then
+            selfSlapLast = text
+            pcall(function() selfSlapStatus:SetText("Status: "..text) end)
+        end
+    end
+
+    local function setSlappleStatus(text)
+        if text ~= slappleLast then
+            slappleLast = text
+            pcall(function() slappleStatus:SetText("Status: "..text) end)
+        end
+    end
+
+    local function getGlove()
+        local stats = LocalPlayer:FindFirstChild("leaderstats")
+        local glove = stats and stats:FindFirstChild("Glove")
+        return glove and tostring(glove.Value) or "Default"
+    end
+
+    local function slapSelf()
+        local char = LocalPlayer.Character
+        local partName = Options.SelfSlapFarm_Part and Options.SelfSlapFarm_Part.Value or "Head"
+        local hitPart = char and char:FindFirstChild(partName)
+        if not hitPart and char and partName == "Torso" then hitPart = char:FindFirstChild("UpperTorso") end
+        if not hitPart and char then hitPart = char:FindFirstChild("Head") end
+        if not hitPart then return false, "waiting for character" end
+        local glove = getGlove()
+        local remoteName = SlapRemotes[glove] or "GeneralHit"
+        local remote = ReplicatedStorage:FindFirstChild(remoteName)
+        if not remote then return false, "missing "..remoteName end
+        local ok = pcall(function() remote:FireServer(hitPart) end)
+        if not ok then return false, "remote failed" end
+        return true, remoteName
+    end
+
+    local function inArena(char)
+        if not char then return false end
+        local flag = char:FindFirstChild("isInArena")
+        if flag and flag:IsA("BoolValue") then return flag.Value end
+        local entered = char:FindFirstChild("entered")
+        if entered then return not entered:IsA("BoolValue") or entered.Value end
+        return false
+    end
+
+    local function slappleFolder()
+        local arena = workspace:FindFirstChild("Arena")
+        local island = arena and arena:FindFirstChild("island5")
+        return island and island:FindFirstChild("Slapples")
+    end
+
+    local teleportSaved = nil
+
+    local function restoreTeleport()
+        local saved = teleportSaved
+        if not saved then return end
+        teleportSaved = nil
+        pcall(function()
+            saved.part:PivotTo(saved.pivot)
+            if saved.collide ~= nil then saved.part.CanCollide = saved.collide end
+        end)
+    end
+
+    local function enterArena()
+        local char = LocalPlayer.Character
+        if inArena(char) then return true end
+        local lobby = workspace:FindFirstChild("Lobby")
+        local tp = lobby and lobby:FindFirstChild("Teleport1")
+        if not char or not tp then return false end
+        if not teleportSaved then
+            teleportSaved = { part = tp, pivot = tp:GetPivot() }
+            if tp:IsA("BasePart") then teleportSaved.collide = tp.CanCollide end
+        end
+        if tp:IsA("BasePart") then pcall(function() tp.CanCollide = false end) end
+        local started = os.clock()
+        local entered = false
+        while not unloaded and os.clock() - started < 5 do
+            local runToggle = Toggles.SlappleFarm_Enabled
+            if not (runToggle and runToggle.Value) then break end
+            char = LocalPlayer.Character
+            local root = getRoot()
+            local current = lobby and lobby:FindFirstChild("Teleport1")
+            if not char or not root or not current then break end
+            if inArena(char) then
+                entered = true
+                break
+            end
+            pcall(function() current:PivotTo(root.CFrame) end)
+            task.wait()
+        end
+        restoreTeleport()
+        return entered
+    end
+
+    local function getSlappleGloves()
+        local folder = slappleFolder()
+        if not folder then return nil end
+        local list = {}
+        local seen = {}
+        for _, obj in ipairs(folder:GetDescendants()) do
+            if obj:IsA("TouchTransmitter") then
+                local part = obj.Parent
+                local model = part and part.Parent
+                if part and not part:IsA("BasePart") then
+                    part = part:FindFirstChildWhichIsA("BasePart") or part.PrimaryPart
+                end
+                if part and part:IsA("BasePart") and not seen[part] then
+                    local names = tostring(part.Name).." "..tostring(model and model.Name or "")
+                    local isGolden = string.find(names, "Golden", 1, true) ~= nil
+                    local goldenToggle = Toggles.SlappleFarm_Golden
+                    if not isGolden or (goldenToggle and goldenToggle.Value) then
+                        seen[part] = true
+                        list[#list + 1] = part
+                    end
+                end
+            end
+        end
+        return list
+    end
+
+    local function touchSlapple(part)
+        local char = LocalPlayer.Character
+        local toucher = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head"))
+        if not toucher or not part or not part.Parent then return end
+        pcall(function()
+            firetouchinterest(toucher, part, false)
+            task.wait()
+            firetouchinterest(toucher, part, true)
+        end)
+    end
+
+    local function touchPart(part, root)
+        if not part or not part.Parent or not root then return end
+        local oldCFrame = part.CFrame
+        local oldCanCollide = part.CanCollide
+        pcall(function() part.CanCollide = false end)
+        local start = os.clock()
+        while os.clock() - start < CandyConf.TouchTime do
+            if not isFarmActive() then break end
+            local currentRoot = getRoot()
+            if not currentRoot then break end
+            pcall(function() part:PivotTo(currentRoot.CFrame) end)
+            task.wait()
+        end
+        pcall(function() part:PivotTo(oldCFrame) end)
+        pcall(function() part.CanCollide = oldCanCollide end)
+    end
+
+    local function farmPass(folder)
+        for _, item in ipairs(folder:GetChildren()) do
+            if not isFarmActive() then return end
+            local part = item:IsA("BasePart") and item or item:FindFirstChildWhichIsA("BasePart")
+            local root = getRoot()
+            if part and root then
+                touchPart(part, root)
+            end
+            task.wait(CandyConf.Delay)
+        end
+    end
+
+    local stealthOn = false
+    local lastStatus = ""
+
+    local function setCandyStatus(text)
+        if text ~= lastStatus then
+            lastStatus = text
+            pcall(function() candyStatus:SetText("Status: "..text) end)
+        end
+    end
+
+    task.spawn(function()
+        while not unloaded do
+            local root = getRoot()
+            local hum = getHumanoid()
+            local farmToggle = Toggles.CandyFarm_Enabled
+            local stealthToggle = Toggles.CandyFarm_Stealth
+            local farming = farmToggle and farmToggle.Value and root and hum and hum.Health > 0
+
+            if farming and stealthToggle and stealthToggle.Value then
+                if not stealthOn then
+                    Shared.setHidden("candyfarm", true)
+                    stealthOn = true
+                end
+            elseif stealthOn then
+                Shared.setHidden("candyfarm", false)
+                stealthOn = false
+            end
+
+            if farming then
+                local folder = candyFolder()
+                if folder then
+                    local count = #folder:GetChildren()
+                    setCandyStatus("moving "..count.." candies")
+                    farmPass(folder)
+                    setCandyStatus("loop complete; waiting")
+                else
+                    setCandyStatus("waiting for CandyCorns folder")
+                end
+                task.wait(0.5)
+            else
+                if stealthOn then
+                    Shared.setHidden("candyfarm", false)
+                    stealthOn = false
+                end
+                setCandyStatus("off")
+                task.wait(0.25)
+            end
+        end
+        if stealthOn then Shared.setHidden("candyfarm", false) end
+    end)
+
+    task.spawn(function()
+        while not unloaded do
+            local n = LocalPlayer:GetAttribute("CandyCorn") or 0
+            pcall(function() candyLabel:SetText("Candy Corn: "..n) end)
+            task.wait(0.5)
+        end
+    end)
+
+    task.spawn(function()
+        while not unloaded do
+            local toggle = Toggles.SelfSlapFarm_Enabled
+            local hum = getHumanoid()
+            if toggle and toggle.Value and hum and hum.Health > 0 then
+                SafeSpot.hold("selfslapfarm")
+                local glove = getGlove()
+                local ok, remoteName = slapSelf()
+                pcall(function() selfSlapGloveLabel:SetText("Glove: "..glove) end)
+                setSelfSlapStatus(ok and ("slapping via "..remoteName) or remoteName)
+                task.wait(SlapConf.SlapDelay)
+            else
+                SafeSpot.release("selfslapfarm")
+                setSelfSlapStatus("off")
+                task.wait(0.25)
+            end
+        end
+        SafeSpot.release("selfslapfarm")
+    end)
+
+    task.spawn(function()
+        while not unloaded do
+            local toggle = Toggles.SlappleFarm_Enabled
+            local hum = getHumanoid()
+            if toggle and toggle.Value and hum and hum.Health > 0 then
+                if type(firetouchinterest) ~= "function" then
+                    setSlappleStatus("firetouchinterest unavailable")
+                    task.wait(1)
+                else
+                    local folder = slappleFolder()
+                    if not folder then
+                        setSlappleStatus("waiting for Arena.island5.Slapples")
+                        task.wait(0.5)
+                    else
+                        local char = LocalPlayer.Character
+                        local autoEnter = Toggles.SlappleFarm_AutoEnter
+                        if not inArena(char) and autoEnter and autoEnter.Value then
+                            setSlappleStatus("entering arena")
+                            enterArena()
+                            task.wait(1)
+                            char = LocalPlayer.Character
+                        end
+                        if not inArena(char) then
+                            setSlappleStatus("enter the arena first")
+                            task.wait(0.5)
+                        else
+                            local list = getSlappleGloves() or {}
+                            setSlappleStatus("touching "..tostring(#list).." slapples")
+                            for _, part in ipairs(list) do
+                                local runToggle = Toggles.SlappleFarm_Enabled
+                                if unloaded or not (runToggle and runToggle.Value) then break end
+                                touchSlapple(part)
+                            end
+                            task.wait(SlapConf.SlappleDelay)
+                        end
+                    end
+                end
+            else
+                restoreTeleport()
+                setSlappleStatus("off")
+                task.wait(0.25)
+            end
+        end
+        restoreTeleport()
+    end)
+
+    task.spawn(function()
+        while not unloaded do
+            local stats = LocalPlayer:FindFirstChild("leaderstats")
+            local glove = stats and stats:FindFirstChild("Glove")
+            local slaps = stats and stats:FindFirstChild("Slaps")
+            local char = LocalPlayer.Character
+            local gloveName = glove and tostring(glove.Value) or "Default"
+            local remoteName = SlapRemotes[gloveName] or "GeneralHit"
+            pcall(function()
+                gloveStatLabel:SetText("Glove: "..gloveName)
+                remoteStatLabel:SetText("Remote: "..remoteName)
+                slapsStatLabel:SetText("Slaps: "..tostring(slaps and slaps.Value or 0))
+                arenaStatLabel:SetText("Arena: "..(inArena(char) and "yes" or "no"))
+            end)
+            task.wait(0.5)
+        end
+    end)
+
+    onCleanup(restoreTeleport)
+end
+
+------------------------------------------------------------
+-- FUN TAB
+------------------------------------------------------------
+do
+    local GameBox = addGroup(FunTab, "Left", "Mini Games", "gamepad-2")
+    local HIGHSCORE_FILE = "ChillhubDinoHighScore.txt"; local highScore = 0
+    pcall(function() if type(isfile) == "function" and isfile(HIGHSCORE_FILE) then highScore = tonumber(readfile(HIGHSCORE_FILE)) or 0 end end)
+    local function saveHighScore() pcall(function() if type(writefile) == "function" then writefile(HIGHSCORE_FILE, tostring(highScore)) end end) end
+    local highLabel = GameBox:AddLabel("Best: "..tostring(highScore))
+    GameBox:AddInput("Dino_Difficulty", { Text="Dino Difficulty", Default="3", Numeric=true, Finished=false, Placeholder="1-5" })
+
+    local PLAY_W = 600; local PLAY_H = 180; local GROUND_Y = 150; local DINO_X = 48
+    local GRAVITY = 2200; local JUMP_VEL = 640; local FAST_FALL = 3
+    local STAND_W = 32; local STAND_H = 36; local DUCK_W = 44; local DUCK_H = 22
+    local activeGame = nil
+    local function closeDino() if activeGame then activeGame.destroy(); activeGame = nil end end
+    local function getDinoParams()
+        local d = tonumber(Options.Dino_Difficulty and Options.Dino_Difficulty.Value) or 3
+        if d <= 1 then return {initSpeed=200,maxSpeed=500,mult=0.5}
+        elseif d == 2 then return {initSpeed=250,maxSpeed=620,mult=0.7}
+        elseif d == 3 then return {initSpeed=300,maxSpeed=760,mult=0.9}
+        elseif d == 4 then return {initSpeed=400,maxSpeed=980,mult=1.2}
+        else return {initSpeed=500,maxSpeed=1200,mult=1.5} end
+    end
+
+    local function openDino()
+        if activeGame then return end
+        local gui = Instance.new("ScreenGui"); gui.Name = "ChillDinoRun"; gui.ResetOnSpawn = false; gui.DisplayOrder = 50; gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+        local window = Instance.new("Frame")
+        window.Size = UDim2.fromOffset(PLAY_W, PLAY_H+28)
+        window.Position = UDim2.new(0.5, -PLAY_W/2, 0.5, -(PLAY_H+28)/2)
+        window.BackgroundColor3 = Color3.fromRGB(20,20,24); window.BorderSizePixel = 0
+        window.ClipsDescendants = true; window.Parent = gui
+        Instance.new("UICorner", window).CornerRadius = UDim.new(0,8)
+
+        local titleBar = Instance.new("Frame")
+        titleBar.Size = UDim2.fromOffset(PLAY_W, 28); titleBar.BackgroundColor3 = Color3.fromRGB(34,34,42)
+        titleBar.BorderSizePixel = 0; titleBar.Parent = window
+        local title = Instance.new("TextLabel")
+        title.BackgroundTransparency = 1; title.Position = UDim2.fromOffset(10,0)
+        title.Size = UDim2.new(1,-50,1,0); title.Font = Enum.Font.GothamBold; title.TextSize = 14
+        title.TextXAlignment = Enum.TextXAlignment.Left; title.TextColor3 = Color3.fromRGB(235,235,240)
+        title.Text = "Dino Run  Space=jump  Down=duck"; title.Parent = titleBar
+
+        local closeButton = Instance.new("TextButton")
+        closeButton.Size = UDim2.fromOffset(28,28); closeButton.Position = UDim2.fromOffset(PLAY_W-28,0)
+        closeButton.BackgroundTransparency = 1; closeButton.Font = Enum.Font.GothamBold
+        closeButton.TextSize = 16; closeButton.TextColor3 = Color3.fromRGB(255,120,120)
+        closeButton.Text = "X"; closeButton.Parent = titleBar
+        closeButton.MouseButton1Click:Connect(closeDino)
+        local stopDrag = makeDraggable(titleBar, window)
+
+        local play = Instance.new("Frame")
+        play.Position = UDim2.fromOffset(0,28); play.Size = UDim2.fromOffset(PLAY_W,PLAY_H)
+        play.BackgroundColor3 = Color3.fromRGB(26,26,32); play.BorderSizePixel = 0
+        play.ClipsDescendants = true; play.Active = true; play.Parent = window
+
+        local ground = Instance.new("Frame")
+        ground.Position = UDim2.fromOffset(0,GROUND_Y); ground.Size = UDim2.fromOffset(PLAY_W,2)
+        ground.BackgroundColor3 = Color3.fromRGB(120,120,130); ground.BorderSizePixel = 0; ground.Parent = play
+
+        local scoreLabel = Instance.new("TextLabel")
+        scoreLabel.BackgroundTransparency = 1; scoreLabel.Position = UDim2.fromOffset(PLAY_W-240,8)
+        scoreLabel.Size = UDim2.fromOffset(230,20); scoreLabel.Font = Enum.Font.Code; scoreLabel.TextSize = 16
+        scoreLabel.TextXAlignment = Enum.TextXAlignment.Right; scoreLabel.TextColor3 = Color3.fromRGB(190,190,200)
+        scoreLabel.Text = ""; scoreLabel.Parent = play
+
+        local messageLabel = Instance.new("TextLabel")
+        messageLabel.BackgroundTransparency = 1; messageLabel.Position = UDim2.fromOffset(0,46)
+        messageLabel.Size = UDim2.fromOffset(PLAY_W,56); messageLabel.Font = Enum.Font.GothamBold
+        messageLabel.TextSize = 18; messageLabel.TextColor3 = Color3.fromRGB(235,235,240)
+        messageLabel.Text = ""; messageLabel.Parent = play
+
+        local clouds = {}
+        for i = 1, 3 do
+            local cy = 24 + (i%2)*28
+            local cloud = Instance.new("Frame")
+            cloud.BorderSizePixel = 0; cloud.BackgroundColor3 = Color3.fromRGB(46,46,56)
+            cloud.Size = UDim2.fromOffset(46,12); cloud.Position = UDim2.fromOffset(i*200, cy); cloud.Parent = play
+            clouds[i] = {frame=cloud, x=i*200, y=cy}
+        end
+
+        local dinoFrame = Instance.new("Frame")
+        dinoFrame.BackgroundTransparency = 1; dinoFrame.AnchorPoint = Vector2.new(0,1); dinoFrame.Parent = play
+        local function makePart2(color) local f = Instance.new("Frame"); f.BorderSizePixel = 0; f.BackgroundColor3 = color; f.Parent = dinoFrame; return f end
+        local DC = Color3.fromRGB(235,235,240)
+        local body = makePart2(DC); local head = makePart2(DC); local tail = makePart2(DC)
+        local legA = makePart2(DC); local legB = makePart2(DC); local eye = makePart2(Color3.fromRGB(20,20,24))
+        local function setRect(f,x,y,w,h) f.Position = UDim2.fromOffset(x,y); f.Size = UDim2.fromOffset(w,h) end
+        local function layoutDino(crouch, legStep)
+            if crouch then
+                dinoFrame.Size = UDim2.fromOffset(DUCK_W,DUCK_H)
+                setRect(body,4,4,30,12); setRect(head,28,2,16,10); setRect(eye,38,4,3,3); setRect(tail,0,6,6,5)
+                setRect(legA,8,16,6,legStep and 6 or 4); setRect(legB,20,16,6,legStep and 4 or 6)
+            else
+                dinoFrame.Size = UDim2.fromOffset(STAND_W,STAND_H)
+                setRect(body,4,12,20,16); setRect(head,14,0,18,14); setRect(eye,26,3,3,3); setRect(tail,0,16,6,6)
+                setRect(legA,6,28,6,legStep and 8 or 5); setRect(legB,16,28,6,legStep and 5 or 8)
+            end
+        end
+
+        local state = "ready"; local dinoH = 0; local vy = 0; local ducking = false; local score = 0
+        local speed = getDinoParams().initSpeed; local obstacles = {}; local nextSpawn = 400
+        local runTimer = 0; local stepFlag = false; local deadAt = 0; local lastScoreInt = -1; local lastLayout = ""
+        local function pad(n) return ("%05d"):format(math.floor(n)) end
+        local function updateScoreText() scoreLabel.Text = "HI "..pad(highScore).."   "..pad(score) end
+        local function clearObstacles() for _, o in ipairs(obstacles) do o.frame:Destroy() end; table.clear(obstacles) end
+        local function resetGame()
+            clearObstacles(); local np = getDinoParams()
+            score = 0; speed = np.initSpeed; dinoH = 0; vy = 0; ducking = false
+            nextSpawn = 400; runTimer = 0; lastScoreInt = -1; lastLayout = ""
+            updateScoreText()
+        end
+        local function spawnObstacle()
+            local frame = Instance.new("Frame"); frame.BorderSizePixel = 0; frame.Parent = play; local o
+            if score > 250 and math.random() < 0.3 then
+                local bottom = (math.random() < 0.5) and 26 or 60
+                local y = GROUND_Y - bottom - 18
+                frame.Size = UDim2.fromOffset(34,18); frame.BackgroundColor3 = Color3.fromRGB(255,170,60)
+                frame.Position = UDim2.fromOffset(PLAY_W+10, y)
+                local wing = Instance.new("Frame"); wing.BorderSizePixel = 0
+                wing.BackgroundColor3 = Color3.fromRGB(255,220,140); wing.Size = UDim2.fromOffset(14,6)
+                wing.Position = UDim2.fromOffset(8,-6); wing.Parent = frame
+                o = {frame=frame,x=PLAY_W+10,y=y,w=34,h=18,bird=true,wing=wing,flap=0}
+            else
+                local w = math.random(14,30); local h = math.random(30,52); local y = GROUND_Y - h
+                frame.Size = UDim2.fromOffset(w,h); frame.BackgroundColor3 = Color3.fromRGB(80,190,110)
+                frame.Position = UDim2.fromOffset(PLAY_W+10, y)
+                local aL = Instance.new("Frame"); aL.BorderSizePixel = 0
+                aL.BackgroundColor3 = frame.BackgroundColor3; aL.Size = UDim2.fromOffset(6,5)
+                aL.Position = UDim2.fromOffset(-6, math.floor(h*0.35)); aL.Parent = frame
+                local aR = Instance.new("Frame"); aR.BorderSizePixel = 0
+                aR.BackgroundColor3 = frame.BackgroundColor3; aR.Size = UDim2.fromOffset(6,5)
+                aR.Position = UDim2.fromOffset(w, math.floor(h*0.2)); aR.Parent = frame
+                o = {frame=frame,x=PLAY_W+10,y=y,w=w,h=h,bird=false}
+            end
+            table.insert(obstacles, o)
+        end
+        local function isCrouching() return ducking and dinoH <= 0 end
+        local function dinoRect()
+            local w = STAND_W; local h = STAND_H
+            if isCrouching() then w = DUCK_W; h = DUCK_H end
+            return DINO_X+5, GROUND_Y-dinoH-h+3, DINO_X+w-5, GROUND_Y-dinoH-3
+        end
+        local function refreshDino()
+            local crouch = isCrouching()
+            local ls = state == "running" and dinoH <= 0 and stepFlag
+            local key = (crouch and "d" or "s")..(ls and "1" or "0")
+            if key ~= lastLayout then lastLayout = key; layoutDino(crouch, ls) end
+            dinoFrame.Position = UDim2.fromOffset(DINO_X, GROUND_Y-dinoH)
+        end
+        local function die()
+            state = "dead"; deadAt = os.clock()
+            local final = math.floor(score)
+            if final > highScore then highScore = final; saveHighScore(); highLabel:SetText("Best: "..tostring(highScore)) end
+            updateScoreText(); messageLabel.Text = "G A M E   O V E R\nSpace / click to restart"
+        end
+        local function jump()
+            if state == "ready" then state = "running"; messageLabel.Text = ""
+            elseif state == "dead" then
+                if os.clock() - deadAt > 0.4 then resetGame(); state = "running"; messageLabel.Text = "" end
+                return
+            end
+            if dinoH <= 0 then vy = JUMP_VEL end
+        end
+        local function step(dt)
+            dt = math.min(dt, 0.05)
+            for _, cloud in ipairs(clouds) do
+                cloud.x -= 40*dt
+                if cloud.x < -60 then cloud.x = PLAY_W + math.random(20,120) end
+                cloud.frame.Position = UDim2.fromOffset(cloud.x, cloud.y)
+            end
+            if state ~= "running" then refreshDino(); return end
+            if dinoH > 0 or vy > 0 then
+                local g = GRAVITY; if ducking then g *= FAST_FALL end
+                vy -= g*dt; dinoH += vy*dt
+                if dinoH <= 0 then dinoH = 0; vy = 0 end
+            end
+            runTimer += dt
+            if runTimer >= 0.1 then runTimer = 0; stepFlag = not stepFlag end
+            local np = getDinoParams()
+            score += speed*dt/40
+            speed = math.min(np.initSpeed + score*np.mult, np.maxSpeed)
+            local si = math.floor(score)
+            if si ~= lastScoreInt then lastScoreInt = si; updateScoreText() end
+            nextSpawn -= speed*dt
+            if nextSpawn <= 0 then spawnObstacle(); nextSpawn = speed*(0.85 + math.random()*0.75) end
+            refreshDino()
+            local dL, dT, dR, dB = dinoRect()
+            for i = #obstacles, 1, -1 do
+                local o = obstacles[i]; o.x -= speed*dt
+                o.frame.Position = UDim2.fromOffset(o.x, o.y)
+                if o.bird then o.flap += dt; o.wing.Position = UDim2.fromOffset(8, (o.flap%0.3 < 0.15) and -6 or 16) end
+                if o.x + o.w < -20 then
+                    o.frame:Destroy(); table.remove(obstacles, i)
+                elseif dL < o.x+o.w-3 and dR > o.x+3 and dT < o.y+o.h-3 and dB > o.y+3 then
+                    die(); return
+                end
+            end
+        end
+        local actionName = "ChillDinoInput"
+        local function handleAction(_, inputState, inputObject)
+            local code = inputObject.KeyCode
+            if inputState == Enum.UserInputState.Begin then
+                if code == Enum.KeyCode.Space or code == Enum.KeyCode.Up or code == Enum.KeyCode.W then jump()
+                elseif code == Enum.KeyCode.Down or code == Enum.KeyCode.S then ducking = true end
+            elseif inputState == Enum.UserInputState.End then
+                if code == Enum.KeyCode.Down or code == Enum.KeyCode.S then ducking = false end
+            end
+            return Enum.ContextActionResult.Sink
+        end
+        ContextActionService:BindActionAtPriority(actionName, handleAction, false, Enum.ContextActionPriority.High.Value, Enum.KeyCode.Space, Enum.KeyCode.Up, Enum.KeyCode.W, Enum.KeyCode.Down, Enum.KeyCode.S)
+        play.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then jump() end
+        end)
+        local conn = RunService.Heartbeat:Connect(step)
+        resetGame(); messageLabel.Text = "Space / click to start"; refreshDino()
+        activeGame = { destroy = function()
+            conn:Disconnect(); stopDrag()
+            ContextActionService:UnbindAction(actionName)
+            gui:Destroy()
+        end }
+    end
+    GameBox:AddButton({ Text="Play Dino Run", Func=openDino })
+    GameBox:AddButton({ Text="Close Game", Func=closeDino })
+    GameBox:AddButton({ Text="Reset Best Score", Func=function() highScore = 0; saveHighScore(); highLabel:SetText("Best: 0") end })
+    onCleanup(closeDino)
+
+    ----------------------------------------------------------
+    -- CHARACTER FUN
+    ----------------------------------------------------------
+    local FunBox = addGroup(FunTab, "Right", "Character Fun", "smile")
+    FunBox:AddToggle("Fun_Spin", { Text="Spin", Default=false, Callback=function(v) setAutoRotateLock("spin", v) end })
+    FunBox:AddInput("Fun_SpinSpeed", { Text="Spin Speed", Default="10", Numeric=true, Finished=false, Placeholder="1-40" })
+    connect(RunService.Heartbeat, function(dt)
+        if not Toggles.Fun_Spin or not Toggles.Fun_Spin.Value or isRagdolled(getHumanoid()) then return end
+        local root = getRoot()
+        if root then root.CFrame = root.CFrame * CFrame.Angles(0, math.rad((tonumber(Options.Fun_SpinSpeed.Value) or 10)*36)*dt, 0) end
+    end)
+    onCleanup(function() setAutoRotateLock("spin", false) end)
+
+    local rainbowOrig = setmetatable({}, { __mode = "k" })
+    local rainbowParts = {}
+    local rainbowChar = nil
+    local function rainbowCache()
+        table.clear(rainbowParts)
+        local c = LocalPlayer.Character
+        if not c then return end
+        for _, part in ipairs(c:GetDescendants()) do
+            if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                rainbowParts[#rainbowParts+1] = part
+            end
+        end
+        rainbowChar = c
+    end
+    connect(LocalPlayer.CharacterAdded, function() table.clear(rainbowOrig); table.clear(rainbowParts); rainbowChar = nil end)
+    FunBox:AddToggle("Fun_Rainbow", { Text="Rainbow Character", Default=false, Callback=function(v)
+        if v then rainbowCache()
+        else
+            for part, col in pairs(rainbowOrig) do if part.Parent then part.Color = col end end
+            table.clear(rainbowOrig); table.clear(rainbowParts); rainbowChar = nil
+        end
+    end })
+    local rainbowT = 0; local rainbowRescan = 0
+    connect(RunService.Heartbeat, function(dt)
+        if not Toggles.Fun_Rainbow or not Toggles.Fun_Rainbow.Value then return end
+        rainbowT += dt
+        if rainbowT < 0.05 then return end
+        rainbowT = 0
+        local c = LocalPlayer.Character
+        if not c then return end
+        rainbowRescan += 0.05
+        if c ~= rainbowChar or #rainbowParts == 0 or rainbowRescan >= 2 then
+            rainbowRescan = 0; rainbowCache()
+        end
+        local col = Color3.fromHSV((os.clock()*0.3)%1, 0.8, 1)
+        for i = 1, #rainbowParts do
+            local part = rainbowParts[i]
+            if part.Parent then
+                if rainbowOrig[part] == nil then rainbowOrig[part] = part.Color end
+                part.Color = col
+            end
+        end
+    end)
+
+    local trailObj = nil
+    local function removeTrail()
+        local t = trailObj
+        trailObj = nil
+        if not t then return end
+        pcall(function() t.trail:Destroy() end)
+        pcall(function() t.a0:Destroy() end)
+        pcall(function() t.a1:Destroy() end)
+    end
+    FunBox:AddToggle("Fun_Trail", { Text="Character Trail", Default=false, Callback=function(v) if not v then removeTrail() end end }):AddColorPicker("Fun_TrailColor", { Default=Color3.fromRGB(255,100,0), Title="Trail Color" })
+    FunBox:AddToggle("Fun_TrailRainbow", { Text="Rainbow Trail", Default=false })
+    FunBox:AddInput("Fun_TrailLifetime", { Text="Trail Length (s)", Default="0.9", Numeric=true, Finished=false, Placeholder="0.2-3" })
+    FunBox:AddInput("Fun_TrailWidth", { Text="Trail Width (studs)", Default="2.4", Numeric=true, Finished=false, Placeholder="0.5-6" })
+    task.spawn(function()
+        while not unloaded do
+            if Toggles.Fun_Trail and Toggles.Fun_Trail.Value then
+                local root = getRoot()
+                if root then
+                    if not trailObj or trailObj.root ~= root or not trailObj.trail.Parent then
+                        removeTrail()
+                        local a0 = Instance.new("Attachment"); a0.Name = "ChillTrailTop"; a0.Parent = root
+                        local a1 = Instance.new("Attachment"); a1.Name = "ChillTrailBottom"; a1.Parent = root
+                        local trail = Instance.new("Trail")
+                        trail.Name = "ChillTrail"; trail.Attachment0 = a0; trail.Attachment1 = a1
+                        trail.FaceCamera = true; trail.LightEmission = 1; trail.LightInfluence = 0
+                        trail.MinLength = 0.05; trail.Transparency = NumberSequence.new(0,1); trail.Enabled = true; trail.Parent = root
+                        trailObj = {root=root,a0=a0,a1=a1,trail=trail}
+                    end
+                    local w = tonumber(Options.Fun_TrailWidth.Value) or 2.4
+                    if trailObj.w ~= w then
+                        trailObj.w = w
+                        trailObj.a0.Position = Vector3.new(0, w/2, 0)
+                        trailObj.a1.Position = Vector3.new(0, -w/2, 0)
+                    end
+                    local lt = tonumber(Options.Fun_TrailLifetime.Value) or 0.9
+                    if trailObj.lt ~= lt then trailObj.lt = lt; trailObj.trail.Lifetime = lt end
+                    if Toggles.Fun_TrailRainbow and Toggles.Fun_TrailRainbow.Value then
+                        local hue = (os.clock()*0.4)%1
+                        trailObj.trail.Color = ColorSequence.new({
+                            ColorSequenceKeypoint.new(0, Color3.fromHSV(hue,0.9,1)),
+                            ColorSequenceKeypoint.new(0.5, Color3.fromHSV((hue+0.15)%1,0.9,1)),
+                            ColorSequenceKeypoint.new(1, Color3.fromHSV((hue+0.3)%1,0.9,1)),
+                        })
+                    elseif trailObj.col ~= Options.Fun_TrailColor.Value then
+                        trailObj.col = Options.Fun_TrailColor.Value
+                        trailObj.trail.Color = ColorSequence.new(trailObj.col)
+                    end
+                end
+            end
+            task.wait(0.1)
+        end
+    end)
+    onCleanup(removeTrail)
+    FunBox:AddButton({ Text="Sit", Func=function() local h = getHumanoid(); if h then h.Sit = true end end })
+
+    ----------------------------------------------------------
+    -- SLAP AURA
+    ----------------------------------------------------------
+    local AuraBox = addGroup(SlapTab, "Left", "Slap Aura", "zap")
+    AuraBox:AddLabel({ Text="WARNING: Using this can get you banned.", DoesWrap=true })
+    AuraBox:AddToggle("SlapAura_Enabled", { Text="Auto Slap Aura", Default=false })
+    AuraBox:AddToggle("SlapAura_Manual", { Text="Slap Aura", Default=false })
+    AuraBox:AddInput("SlapAura_Radius", { Text="Radius (studs)", Default="18", Numeric=true, Finished=false, Placeholder="5-500" })
+    AuraBox:AddInput("SlapAura_Delay", { Text="Auto Slap Delay (ms)", Default="200", Numeric=true, Finished=false, Placeholder="50-1000" })
+    AuraBox:AddToggle("SlapAura_Visual", { Text="Show Aura Ring", Default=true }):AddColorPicker("SlapAura_Color", { Default=Color3.fromRGB(255, 60, 60), Title="Aura Color" })
+    local auraStatus = AuraBox:AddLabel("Status: idle")
+    AuraBox:AddLabel({ Text="Auto Slap Aura slaps players in range. Slap Aura only fires when you click. The ring is local only.", DoesWrap=true })
+
+    local auraRing = nil
+    local auraHighlight = nil
+    local auraLastStatus = ""
+    local manualStatusUntil = 0
+
+    local function clearAuraVisuals()
+        if auraRing then pcall(function() auraRing:Destroy() end); auraRing = nil end
+        if auraHighlight then pcall(function() auraHighlight:Destroy() end); auraHighlight = nil end
+    end
+
+    local function auraRadius()
+        local v = Options.SlapAura_Radius and tonumber(Options.SlapAura_Radius.Value) or 18
+        return math.clamp(v, 5, 500)
+    end
+
+    local function auraDelay()
+        local v = Options.SlapAura_Delay and tonumber(Options.SlapAura_Delay.Value) or 200
+        return math.clamp(v / 1000, 0.05, 5)
+    end
+
+    local function auraGlove()
+        local stats = LocalPlayer:FindFirstChild("leaderstats")
+        local glove = stats and stats:FindFirstChild("Glove")
+        return glove and tostring(glove.Value) or "Default"
+    end
+
+    local function setAuraStatus(text)
+        if text ~= auraLastStatus then
+            auraLastStatus = text
+            pcall(function() auraStatus:SetText("Status: "..text) end)
+        end
+    end
+
+    local function auraColor()
+        local c = Options.SlapAura_Color and Options.SlapAura_Color.Value
+        return typeof(c) == "Color3" and c or Color3.fromRGB(255, 60, 60)
+    end
+
+    local function updateAuraVisual(char, root)
+        local visual = Toggles.SlapAura_Visual and Toggles.SlapAura_Visual.Value
+        if not visual then clearAuraVisuals(); return end
+        local radius = auraRadius()
+        local color = auraColor()
+        if not auraRing or not auraRing.Parent then
+            local ring = Instance.new("Part")
+            ring.Name = "ChillhubSlapAuraRing"
+            ring.Shape = Enum.PartType.Cylinder
+            ring.Anchored = true
+            ring.CanCollide = false
+            ring.CanTouch = false
+            ring.CanQuery = false
+            ring.CastShadow = false
+            ring.Material = Enum.Material.Neon
+            ring.Color = color
+            ring.Transparency = 0.75
+            ring.Parent = workspace
+            auraRing = ring
+        end
+        auraRing.Size = Vector3.new(0.15, radius * 2, radius * 2)
+        auraRing.Color = color
+        auraRing.CFrame = CFrame.new(root.Position - Vector3.new(0, 2.8, 0)) * CFrame.Angles(0, 0, math.rad(90))
+        if not auraHighlight or auraHighlight.Parent ~= char then
+            if auraHighlight then pcall(function() auraHighlight:Destroy() end) end
+            local hl = Instance.new("Highlight")
+            hl.Name = "ChillhubSlapAuraHighlight"
+            hl.FillColor = color
+            hl.FillTransparency = 0.8
+            hl.OutlineColor = color
+            hl.OutlineTransparency = 0.1
+            hl.Parent = char
+            auraHighlight = hl
+        end
+        auraHighlight.FillColor = color
+        auraHighlight.OutlineColor = color
+    end
+
+    connect(RunService.Heartbeat, function()
+        local autoOn = Toggles.SlapAura_Enabled and Toggles.SlapAura_Enabled.Value
+        local manualOn = Toggles.SlapAura_Manual and Toggles.SlapAura_Manual.Value
+        if not (autoOn or manualOn) then
+            if auraRing or auraHighlight then clearAuraVisuals() end
+            return
+        end
+        local char = LocalPlayer.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if char and root then updateAuraVisual(char, root) else clearAuraVisuals() end
+    end)
+
+    local function fireAuraOnce()
+        local char = LocalPlayer.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        local remotes = getgenv().ChillhubSlapRemotes or {}
+        local glove = auraGlove()
+        local remoteName = remotes[glove] or "GeneralHit"
+        local remote = ReplicatedStorage:FindFirstChild(remoteName)
+        local hits = 0
+        if root and remote then
+            local radius = auraRadius()
+            local targets = {}
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr ~= LocalPlayer then
+                    local tchar = plr.Character
+                    local thum = tchar and tchar:FindFirstChildOfClass("Humanoid")
+                    local troot = tchar and (tchar:FindFirstChild("HumanoidRootPart") or tchar:FindFirstChild("Head"))
+                    if thum and thum.Health > 0 and troot and (troot.Position - root.Position).Magnitude <= radius then
+                        table.insert(targets, tchar:FindFirstChild("Head") or troot)
+                    end
+                end
+            end
+            for index, hit in ipairs(targets) do
+                pcall(function() remote:FireServer(hit) end)
+                hits += 1
+                if index < #targets then task.wait(0.15) end
+            end
+        end
+        return hits, glove, remoteName, remote ~= nil
+    end
+
+    task.spawn(function()
+        while not unloaded do
+            local autoOn = Toggles.SlapAura_Enabled and Toggles.SlapAura_Enabled.Value
+            local manualOn = Toggles.SlapAura_Manual and Toggles.SlapAura_Manual.Value
+            local hum = getHumanoid()
+            if autoOn and hum and hum.Health > 0 then
+                local hits, glove, remoteName, hasRemote = fireAuraOnce()
+                if hasRemote then
+                    setAuraStatus(hits > 0 and ("auto | "..glove.." | "..remoteName.." | "..hits.." target(s)") or ("auto | "..glove.." | "..remoteName.." | no targets"))
+                else
+                    setAuraStatus("missing "..remoteName)
+                end
+                task.wait(auraDelay())
+            elseif manualOn and hum and hum.Health > 0 then
+                if os.clock() >= manualStatusUntil then setAuraStatus("manual ready") end
+                task.wait(0.25)
+            else
+                setAuraStatus("off")
+                task.wait(0.25)
+            end
+        end
+        clearAuraVisuals()
+    end)
+
+    local lastManualSlap = 0
+    local function manualAura()
+        local manualToggle = Toggles.SlapAura_Manual
+        if not (manualToggle and manualToggle.Value) then return end
+        local autoToggle = Toggles.SlapAura_Enabled
+        if autoToggle and autoToggle.Value then return end
+        local hum = getHumanoid()
+        if not hum or hum.Health <= 0 then return end
+        local now = os.clock()
+        if now - lastManualSlap < 0.25 then return end
+        lastManualSlap = now
+        local hits, glove, remoteName, hasRemote = fireAuraOnce()
+        if hasRemote then
+            setAuraStatus(hits > 0 and ("manual | "..glove.." | "..remoteName.." | "..hits.." target(s)") or ("manual | "..glove.." | "..remoteName.." | no targets"))
+        else
+            setAuraStatus("missing "..remoteName)
+        end
+        manualStatusUntil = os.clock() + 1.5
+    end
+
+    connect(UserInputService.InputBegan, function(input, gameProcessed)
+        if gameProcessed then return end
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+        manualAura()
+    end)
+
+    local function bindAuraTool(tool)
+        if tool:IsA("Tool") then connect(tool.Activated, manualAura) end
+    end
+
+    local function bindAuraCharacter(char)
+        if not char then return end
+        for _, child in ipairs(char:GetChildren()) do bindAuraTool(child) end
+        connect(char.ChildAdded, function(child) bindAuraTool(child) end)
+    end
+
+    bindAuraCharacter(LocalPlayer.Character)
+    connect(LocalPlayer.CharacterAdded, function(newChar) bindAuraCharacter(newChar) end)
+    onCleanup(clearAuraVisuals)
+
+    ----------------------------------------------------------
+    -- WORLD FUN
+    ----------------------------------------------------------
+    local WorldFunBox = addGroup(FunTab, "Left", "World Fun", "sparkles")
+    local savedDisco = nil
+    WorldFunBox:AddToggle("Fun_Disco", { Text="Disco Lighting", Default=false, Callback=function(v)
+        if v then
+            savedDisco = {
+                Ambient = Lighting.Ambient,
+                OutdoorAmbient = Lighting.OutdoorAmbient,
+                ColorShift_Top = Lighting.ColorShift_Top,
+                ColorShift_Bottom = Lighting.ColorShift_Bottom,
+            }
+        elseif savedDisco then
+            for k, val in pairs(savedDisco) do Lighting[k] = val end
+            savedDisco = nil
+        end
+    end })
+    WorldFunBox:AddInput("Fun_DiscoSpeed", { Text="Disco Speed", Default="3", Numeric=true, Finished=false, Placeholder="1-10" })
+    local discoT = 0
+    connect(RunService.Heartbeat, function(dt)
+        if not Toggles.Fun_Disco or not Toggles.Fun_Disco.Value then return end
+        discoT += dt; if discoT < 0.08 then return end; discoT = 0
+        local hue = (os.clock()*(tonumber(Options.Fun_DiscoSpeed.Value) or 3)*0.1)%1
+        local col = Color3.fromHSV(hue, 0.8, 1)
+        Lighting.Ambient = col
+        Lighting.OutdoorAmbient = col
+        Lighting.ColorShift_Top = col
+        Lighting.ColorShift_Bottom = Color3.fromHSV((hue+0.5)%1, 0.8, 1)
+    end)
+    onCleanup(function() if savedDisco then for k, val in pairs(savedDisco) do Lighting[k] = val end end end)
+end
+
+------------------------------------------------------------
+-- GAME TAB
+------------------------------------------------------------
+local okGame, gameErr = xpcall(function()
+do
+    local playerGui = LocalPlayer:FindFirstChild("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui")
+    local GameNetwork = nil
+
+    local function getGameNetwork()
+        if GameNetwork then return GameNetwork end
+        local ok, mod = pcall(function()
+            return require(ReplicatedStorage:WaitForChild("BACKEND"):WaitForChild("Lib"):WaitForChild("Network"))
+        end)
+        if ok then GameNetwork = mod end
+        return GameNetwork
+    end
+
+    local function getDirectRemote(name)
+        local net = getGameNetwork()
+        if net and type(debug) == "table" and type(debug.getupvalues) == "function" then
+            local ok, upvalues = pcall(debug.getupvalues, net.fireServer)
+            if ok and type(upvalues) == "table" then
+                for _, upvalue in ipairs(upvalues) do
+                    if type(upvalue) == "function" then
+                        local ok2, inner = pcall(debug.getupvalues, upvalue)
+                        if ok2 and type(inner) == "table" then
+                            for _, candidate in ipairs(inner) do
+                                if type(candidate) == "table" then
+                                    local remote = candidate[name]
+                                    if remote and typeof(remote) == "Instance" then
+                                        if remote:IsA("RemoteEvent") or remote:IsA("RemoteFunction") or remote:IsA("UnreliableRemoteEvent") then
+                                            return remote
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        local folder = ReplicatedStorage:FindFirstChild("_NETWORK")
+        local direct = folder and folder:FindFirstChild(name)
+        if direct and typeof(direct) == "Instance" then
+            if direct:IsA("RemoteEvent") or direct:IsA("RemoteFunction") or direct:IsA("UnreliableRemoteEvent") then
+                return direct
+            end
+        end
+        return nil
+    end
+
+    local function gameNetworkInvoke(name, ...)
+        local args = table.pack(...)
+        local direct = getDirectRemote(name)
+        if direct and direct:IsA("RemoteFunction") then
+            local ok, res = pcall(function() return direct:InvokeServer(table.unpack(args, 1, args.n)) end)
+            return ok, res
+        end
+        local net = getGameNetwork()
+        if net then
+            local ok, res = pcall(function() return net.invokeServer(name, table.unpack(args, 1, args.n)) end)
+            if ok then return true, res end
+            return false, res
+        end
+        return false, "Network remote missing"
+    end
+
+    local function gameNetworkFire(name, ...)
+        local args = table.pack(...)
+        local direct = getDirectRemote(name)
+        if direct and (direct:IsA("RemoteEvent") or direct:IsA("UnreliableRemoteEvent")) then
+            local ok, err = pcall(function() direct:FireServer(table.unpack(args, 1, args.n)) end)
+            return ok, err
+        end
+        local net = getGameNetwork()
+        if net then
+            local ok, err = pcall(function() net.fireServer(name, table.unpack(args, 1, args.n)) end)
+            if ok then return true end
+            return false, err
+        end
+        return false, "Network remote missing"
+    end
+
+    ----------------------------------------------------------
+    -- PLAYER ESP
+    ----------------------------------------------------------
+    local espEntries = {}
+    local espBonePairsR15 = {
+        {"Head","UpperTorso"}, {"UpperTorso","LowerTorso"}, {"LowerTorso","HumanoidRootPart"},
+        {"UpperTorso","LeftUpperArm"}, {"LeftUpperArm","LeftLowerArm"}, {"LeftLowerArm","LeftHand"},
+        {"UpperTorso","RightUpperArm"}, {"RightUpperArm","RightLowerArm"}, {"RightLowerArm","RightHand"},
+        {"LowerTorso","LeftUpperLeg"}, {"LeftUpperLeg","LeftLowerLeg"}, {"LeftLowerLeg","LeftFoot"},
+        {"LowerTorso","RightUpperLeg"}, {"RightUpperLeg","RightLowerLeg"}, {"RightLowerLeg","RightFoot"},
+    }
+    local espBonePairsR6 = {
+        {"Head","Torso"},
+        {"Torso","Left Arm"}, {"Torso","Right Arm"},
+        {"Torso","Left Leg"}, {"Torso","Right Leg"},
+    }
+
+    local function espToggleOn(name)
+        local t = Toggles[name]
+        return t ~= nil and t.Value == true
+    end
+
+    local function espOptionColor(name, fallback)
+        local c = Options[name] and Options[name].Value
+        return typeof(c) == "Color3" and c or fallback
+    end
+
+    local function espColor()
+        return espOptionColor("GameESP_Color", Color3.fromRGB(0, 255, 170))
+    end
+
+    local function espSkeletonColor()
+        return espOptionColor("GameESP_SkeletonColor", Color3.fromRGB(255, 255, 255))
+    end
+
+    local function espSkeletonThickness()
+        local v = Options.GameESP_SkeletonThickness and tonumber(Options.GameESP_SkeletonThickness.Value) or 1
+        return math.clamp(v, 1, 5)
+    end
+
+    local function espMaxDistance()
+        local v = Options.GameESP_MaxDistance and tonumber(Options.GameESP_MaxDistance.Value) or 1500
+        return math.clamp(v, 50, 5000)
+    end
+
+    local function espHealthColor(hum)
+        local maxHealth = hum and hum.MaxHealth or 100
+        local health = hum and hum.Health or maxHealth
+        local frac = maxHealth > 0 and math.clamp(health / maxHealth, 0, 1) or 1
+        return Color3.fromHSV(frac * 0.33, 1, 1)
+    end
+
+    local function createSkeletonLines()
+        if Drawing == nil or type(Drawing.new) ~= "function" then return nil end
+        local lines = {}
+        for i = 1, #espBonePairsR15 do
+            local ok, line = pcall(function() return Drawing.new("Line") end)
+            if not ok or not line then
+                for _, l in ipairs(lines) do pcall(function() l:Remove() end) end
+                return nil
+            end
+            line.Visible = false
+            line.Thickness = 1
+            line.Transparency = 0.7
+            line.Color = Color3.fromRGB(255, 255, 255)
+            lines[i] = line
+        end
+        return lines
+    end
+
+    local function destroySkeletonLines(lines)
+        if not lines then return end
+        for _, line in ipairs(lines) do
+            pcall(function() line.Visible = false end)
+            pcall(function() line:Remove() end)
+            pcall(function() line:Destroy() end)
+        end
+    end
+
+    local function destroyEspEntry(entry)
+        if not entry then return end
+        pcall(function() if entry.hl then entry.hl:Destroy() end end)
+        pcall(function() if entry.bb then entry.bb:Destroy() end end)
+        destroySkeletonLines(entry.skeleton)
+    end
+
+    local function clearESP()
+        for _, entry in pairs(espEntries) do destroyEspEntry(entry) end
+        table.clear(espEntries)
+    end
+
+    local function createESP(char, head)
+        local fillOn = espToggleOn("GameESP_Fill")
+        local outlineOn = espToggleOn("GameESP_Outline")
+
+        local hl = Instance.new("Highlight")
+        hl.Name = "ChillhubGameESP"
+        hl.Adornee = char
+        hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        hl.FillTransparency = fillOn and 0.68 or 1
+        hl.OutlineTransparency = outlineOn and 0.05 or 1
+        hl.Enabled = fillOn or outlineOn
+        hl.Parent = char
+
+        local bb = Instance.new("BillboardGui")
+        bb.Name = "ChillhubGameESP"
+        bb.Adornee = head
+        bb.AlwaysOnTop = true
+        bb.Size = UDim2.fromOffset(235, 74)
+        bb.StudsOffset = Vector3.new(0, 2.6, 0)
+        bb.Parent = head
+
+        local label = Instance.new("TextLabel")
+        label.Name = "Info"
+        label.BackgroundTransparency = 1
+        label.Size = UDim2.fromScale(1, 1)
+        label.Font = Enum.Font.GothamBold
+        label.TextSize = 13
+        label.TextColor3 = Color3.fromRGB(255, 255, 255)
+        label.TextStrokeTransparency = 0.65
+        label.TextStrokeColor3 = Color3.new(0, 0, 0)
+        label.TextWrapped = true
+        label.Text = ""
+        label.Parent = bb
+
+        return {char = char, head = head, hl = hl, bb = bb, label = label}
+    end
+
+    local function updateESP()
+        local on = espToggleOn("GameESP_Enabled")
+        if not on then
+            if next(espEntries) ~= nil then clearESP() end
+            return
+        end
+        local lroot = getRoot()
+        if not lroot then clearESP(); return end
+        local maxDist = espMaxDistance()
+        local baseColor = espColor()
+        local fillOn = espToggleOn("GameESP_Fill")
+        local outlineOn = espToggleOn("GameESP_Outline")
+        local useHealthColor = espToggleOn("GameESP_HealthColor")
+        local skeletonOn = espToggleOn("GameESP_Skeleton")
+        local showNames = espToggleOn("GameESP_Names")
+        local showHealth = espToggleOn("GameESP_Health")
+        local showDistance = espToggleOn("GameESP_Distance")
+        local showGlove = espToggleOn("GameESP_Glove")
+        local showSlaps = espToggleOn("GameESP_Slaps")
+        local seen = {}
+
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                seen[player] = true
+                local char = player.Character
+                local head = char and char:FindFirstChild("Head")
+                local root = char and char:FindFirstChild("HumanoidRootPart")
+                local hum = char and char:FindFirstChildOfClass("Humanoid")
+                local entry = espEntries[player]
+
+                if not (char and head and root and hum and hum.Health > 0) then
+                    if entry then destroyEspEntry(entry); espEntries[player] = nil end
+                else
+                    local dist = (root.Position - lroot.Position).Magnitude
+                    if dist > maxDist then
+                        if entry then destroyEspEntry(entry); espEntries[player] = nil end
+                    else
+                        if not entry or entry.char ~= char or entry.head ~= head then
+                            if entry then destroyEspEntry(entry) end
+                            entry = createESP(char, head)
+                            espEntries[player] = entry
+                        end
+                        if entry then
+                            local stats = player:FindFirstChild("leaderstats")
+                            local gloveObj = stats and stats:FindFirstChild("Glove")
+                            local slapsObj = stats and stats:FindFirstChild("Slaps")
+                            local glove = gloveObj and tostring(gloveObj.Value) or tostring(player:GetAttribute("Glove") or "?")
+                            local slaps = slapsObj and tonumber(slapsObj.Value) or 0
+                            local hp = math.max(0, math.floor(hum.Health + 0.5))
+                            local name = player.DisplayName ~= "" and player.DisplayName or player.Name
+                            local color = useHealthColor and espHealthColor(hum) or baseColor
+
+                            entry.hl.FillColor = color
+                            entry.hl.OutlineColor = color
+                            entry.hl.FillTransparency = fillOn and 0.68 or 1
+                            entry.hl.OutlineTransparency = outlineOn and 0.05 or 1
+                            entry.hl.Enabled = fillOn or outlineOn
+                            entry.bb.MaxDistance = maxDist
+
+                            local parts = {}
+                            if showNames then table.insert(parts, name) end
+                            local meta = {}
+                            if showHealth then table.insert(meta, hp.." HP") end
+                            if showDistance then table.insert(meta, math.floor(dist + 0.5).."m") end
+                            if #meta > 0 then table.insert(parts, table.concat(meta, " | ")) end
+                            local extras = {}
+                            if showGlove then table.insert(extras, glove) end
+                            if showSlaps then table.insert(extras, slaps.." slaps") end
+                            if #extras > 0 then table.insert(parts, table.concat(extras, " | ")) end
+
+                            entry.bb.Enabled = #parts > 0
+                            entry.label.Text = table.concat(parts, "\n")
+                            entry.label.TextColor3 = color
+                            if not skeletonOn then
+                                for _, line in ipairs(entry.skeleton or {}) do line.Visible = false end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        for player, entry in pairs(espEntries) do
+            if not seen[player] then destroyEspEntry(entry); espEntries[player] = nil end
+        end
+    end
+
+    local function hideSkeleton(entry)
+        if not entry or not entry.skeleton then return end
+        for _, line in ipairs(entry.skeleton) do
+            pcall(function() line.Visible = false end)
+        end
+    end
+
+    local function updateSkeleton(entry)
+        if not entry or not entry.char or not entry.char.Parent then return end
+        if not espToggleOn("GameESP_Enabled") or not espToggleOn("GameESP_Skeleton") then
+            hideSkeleton(entry)
+            return
+        end
+        if not entry.skeleton then entry.skeleton = createSkeletonLines() end
+        if not entry.skeleton then return end
+        local camera = workspace.CurrentCamera
+        if not camera then hideSkeleton(entry); return end
+
+        local isR15 = entry.char:FindFirstChild("UpperTorso") ~= nil
+        local pairsList = isR15 and espBonePairsR15 or espBonePairsR6
+        local color = espSkeletonColor()
+        local thickness = espSkeletonThickness()
+
+        for i, pair in ipairs(pairsList) do
+            local line = entry.skeleton[i]
+            if line then
+                local p1 = entry.char:FindFirstChild(pair[1])
+                local p2 = entry.char:FindFirstChild(pair[2])
+                if p1 and p2 and p1:IsA("BasePart") and p2:IsA("BasePart") then
+                    local v1, on1 = camera:WorldToViewportPoint(p1.Position)
+                    local v2, on2 = camera:WorldToViewportPoint(p2.Position)
+                    if on1 and on2 and v1.Z > 0 and v2.Z > 0 then
+                        line.From = Vector2.new(v1.X, v1.Y)
+                        line.To = Vector2.new(v2.X, v2.Y)
+                        line.Color = color
+                        line.Thickness = thickness
+                        line.Visible = true
+                    else
+                        line.Visible = false
+                    end
+                else
+                    line.Visible = false
+                end
+            end
+        end
+        for i = #pairsList + 1, #entry.skeleton do
+            entry.skeleton[i].Visible = false
+        end
+    end
+
+    connect(RunService.RenderStepped, function()
+        if not espToggleOn("GameESP_Enabled") or not espToggleOn("GameESP_Skeleton") then return end
+        for _, entry in pairs(espEntries) do
+            updateSkeleton(entry)
+        end
+    end)
+
+    task.spawn(function()
+        while not unloaded do
+            updateESP()
+            task.wait(0.25)
+        end
+        clearESP()
+    end)
+    onCleanup(clearESP)
+
+    local EspBox = addGroup(GameTab, "Left", "Player ESP", "eye")
+    local espToggle = EspBox:AddToggle("GameESP_Enabled", { Text="Player ESP", Default=false })
+    espToggle:AddColorPicker("GameESP_Color", { Default=Color3.fromRGB(0, 255, 170), Title="ESP Color" })
+    EspBox:AddToggle("GameESP_Fill", { Text="ESP Fill", Default=true })
+    EspBox:AddToggle("GameESP_Outline", { Text="ESP Outline", Default=true })
+    EspBox:AddToggle("GameESP_HealthColor", { Text="Health Color", Default=false })
+    EspBox:AddToggle("GameESP_Names", { Text="Names", Default=true })
+    EspBox:AddToggle("GameESP_Health", { Text="Health", Default=true })
+    EspBox:AddToggle("GameESP_Distance", { Text="Distance", Default=true })
+    EspBox:AddToggle("GameESP_Glove", { Text="Glove", Default=true })
+    EspBox:AddToggle("GameESP_Slaps", { Text="Slaps", Default=true })
+    EspBox:AddInput("GameESP_MaxDistance", { Text="Max Distance (studs)", Default="1500", Numeric=true, Finished=false, Placeholder="50-5000" })
+    local skelToggle = EspBox:AddToggle("GameESP_Skeleton", { Text="Skeleton ESP", Default=false })
+    skelToggle:AddColorPicker("GameESP_SkeletonColor", { Default=Color3.fromRGB(255, 255, 255), Title="Skeleton Color" })
+    EspBox:AddInput("GameESP_SkeletonThickness", { Text="Skeleton Thickness", Default="1", Numeric=true, Finished=false, Placeholder="1-5" })
+    EspBox:AddLabel({ Text="Highlights other players with optional fill/outline, health color, names, health, distance, glove, and slaps. Skeleton ESP uses Drawing lines and requires executor support.", DoesWrap=true })
+
+    ----------------------------------------------------------
+    -- GLOVE CHANGE NOTIFIER
+    ----------------------------------------------------------
+    local lastGloves = {}
+
+    local function updateGloveNotifier()
+        local on = Toggles.GameGloveNotify and Toggles.GameGloveNotify.Value
+        if not on then
+            if next(lastGloves) ~= nil then table.clear(lastGloves) end
+            return
+        end
+        local seen = {}
+        for _, player in ipairs(Players:GetPlayers()) do
+            seen[player] = true
+            local stats = player:FindFirstChild("leaderstats")
+            local gloveObj = stats and stats:FindFirstChild("Glove")
+            if gloveObj then
+                local current = tostring(gloveObj.Value)
+                local old = lastGloves[player]
+                if old == nil then
+                    lastGloves[player] = current
+                elseif old ~= current then
+                    lastGloves[player] = current
+                    local name = player.DisplayName ~= "" and player.DisplayName or player.Name
+                    pcall(function() Library:Notify(name.." equipped "..current, 4) end)
+                end
+            end
+        end
+        for player in pairs(lastGloves) do
+            if not seen[player] then lastGloves[player] = nil end
+        end
+    end
+
+    task.spawn(function()
+        while not unloaded do
+            updateGloveNotifier()
+            task.wait(0.5)
+        end
+        table.clear(lastGloves)
+    end)
+    onCleanup(function() table.clear(lastGloves) end)
+
+    local NotifyBox = addGroup(GameTab, "Left", "Glove Notifier", "bell")
+    NotifyBox:AddToggle("GameGloveNotify", { Text="Glove Change Notifier", Default=false })
+    NotifyBox:AddLabel({ Text="Shows a toast when any player in the server changes gloves.", DoesWrap=true })
+
+    ----------------------------------------------------------
+    -- ARENA / LOBBY
+    ----------------------------------------------------------
+    local arenaStatusLabel = nil
+
+    local function setArenaStatus(text)
+        pcall(function() arenaStatusLabel:SetText("Arena: "..text) end)
+    end
+
+    local function gameInArena()
+        local char = LocalPlayer.Character
+        if not char then return false end
+        local flag = char:FindFirstChild("isInArena")
+        if flag and flag:IsA("BoolValue") then return flag.Value end
+        local entered = char:FindFirstChild("entered")
+        if entered then return not entered:IsA("BoolValue") or entered.Value end
+        return false
+    end
+
+    local function enterArenaGame()
+        local char = LocalPlayer.Character
+        if not char then setArenaStatus("no character"); return end
+        if gameInArena() then setArenaStatus("already in"); return end
+        local lobby = workspace:FindFirstChild("Lobby")
+        local tp = lobby and lobby:FindFirstChild("Teleport1")
+        if not tp then setArenaStatus("Teleport1 missing"); return end
+
+        local saved = { part = tp, pivot = tp:GetPivot() }
+        if tp:IsA("BasePart") then
+            saved.collide = tp.CanCollide
+            pcall(function() tp.CanCollide = false end)
+        end
+
+        local started = os.clock()
+        local entered = false
+        setArenaStatus("joining...")
+        while not unloaded and os.clock() - started < 6 do
+            char = LocalPlayer.Character
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            if not char or not root or not tp.Parent then break end
+            if gameInArena() then entered = true; break end
+            pcall(function() tp:PivotTo(root.CFrame) end)
+            task.wait()
+        end
+        pcall(function()
+            saved.part:PivotTo(saved.pivot)
+            if saved.collide ~= nil then saved.part.CanCollide = saved.collide end
+        end)
+        setArenaStatus(entered and "in arena" or "not entered (try again)")
+        if entered then
+            Library:Notify("Joined the arena", 4)
+        else
+            Library:Notify("Could not enter the arena; try again", 4)
+        end
+    end
+
+    local function goToLobby()
+        local char = LocalPlayer.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if not (char and root) then Library:Notify("No character", 4); return end
+        if root.Anchored then Library:Notify("Turn off the farm hold first", 4); return end
+        if hum then hum.Sit = false end
+        char:PivotTo(CFrame.new(-1294.5, 327.7, -5.3))
+        setArenaStatus("lobby")
+        Library:Notify("Teleported to the lobby", 4)
+    end
+
+    local ArenaBox = addGroup(GameTab, "Left", "Arena / Lobby", "map-pin")
+    ArenaBox:AddButton({ Text="Join Arena", Func=function() task.spawn(enterArenaGame) end })
+    ArenaBox:AddButton({ Text="Go to Lobby", Func=goToLobby })
+    arenaStatusLabel = ArenaBox:AddLabel("Arena: "..(gameInArena() and "in" or "out"))
+    ArenaBox:AddLabel({ Text="Join Arena moves the lobby Teleport1 onto you until the arena loads. Go to Lobby teleports you to the lobby spawn. Turn off Auto Enter Arena while using Join Arena.", DoesWrap=true })
+
+    ----------------------------------------------------------
+    -- SLAP STATS HUD
+    ----------------------------------------------------------
+    local statsGui, statsLabel, statsDragDisconnect = nil, nil, nil
+    local statsStartSlaps = 0
+
+    local function destroyStatsHud()
+        if statsDragDisconnect then pcall(statsDragDisconnect); statsDragDisconnect = nil end
+        if statsGui then pcall(function() statsGui:Destroy() end) end
+        statsGui = nil
+        statsLabel = nil
+    end
+
+    local function createStatsHud()
+        destroyStatsHud()
+        local gui = Instance.new("ScreenGui")
+        gui.Name = "ChillhubGameStats"
+        gui.ResetOnSpawn = false
+        gui.IgnoreGuiInset = true
+        gui.DisplayOrder = 50
+        gui.Parent = playerGui
+
+        local frame = Instance.new("Frame")
+        frame.Name = "HUD"
+        frame.Size = UDim2.fromOffset(235, 128)
+        frame.Position = UDim2.fromOffset(18, 84)
+        frame.BackgroundColor3 = Color3.fromRGB(12, 12, 15)
+        frame.BackgroundTransparency = 0.2
+        frame.BorderSizePixel = 0
+        frame.Parent = gui
+
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 9)
+        corner.Parent = frame
+
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = ACCENT
+        stroke.Transparency = 0.15
+        stroke.Thickness = 1
+        stroke.Parent = frame
+
+        local title = Instance.new("TextLabel")
+        title.Name = "Title"
+        title.BackgroundTransparency = 1
+        title.Position = UDim2.fromOffset(12, 8)
+        title.Size = UDim2.new(1, -24, 0, 18)
+        title.Font = Enum.Font.GothamBlack
+        title.TextSize = 13
+        title.TextColor3 = ACCENT
+        title.TextXAlignment = Enum.TextXAlignment.Left
+        title.Text = "SLAP BATTLES"
+        title.Parent = frame
+
+        local label = Instance.new("TextLabel")
+        label.Name = "Info"
+        label.BackgroundTransparency = 1
+        label.Position = UDim2.fromOffset(12, 30)
+        label.Size = UDim2.new(1, -24, 1, -40)
+        label.Font = Enum.Font.GothamBold
+        label.TextSize = 15
+        label.TextColor3 = Color3.fromRGB(255, 255, 255)
+        label.TextStrokeTransparency = 0.9
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.TextYAlignment = Enum.TextYAlignment.Top
+        label.RichText = true
+        label.Text = "Slaps: 0\nGlove: -\nCandy Corn: 0\nSession: +0"
+        label.Parent = frame
+
+        statsDragDisconnect = makeDraggable(frame)
+        statsGui = gui
+        statsLabel = label
+
+        local stats = LocalPlayer:FindFirstChild("leaderstats")
+        local slapsObj = stats and stats:FindFirstChild("Slaps")
+        statsStartSlaps = slapsObj and tonumber(slapsObj.Value) or 0
+    end
+
+    local function updateStatsHud()
+        if not statsLabel then return end
+        local stats = LocalPlayer:FindFirstChild("leaderstats")
+        local slapsObj = stats and stats:FindFirstChild("Slaps")
+        local gloveObj = stats and stats:FindFirstChild("Glove")
+        local slaps = slapsObj and tonumber(slapsObj.Value) or 0
+        local glove = gloveObj and tostring(gloveObj.Value) or tostring(LocalPlayer:GetAttribute("Glove") or "?")
+        local candy = LocalPlayer:GetAttribute("CandyCorn")
+        local session = math.max(0, slaps - statsStartSlaps)
+        local text = string.format("Slaps: <b>%d</b>\nGlove: %s\nCandy Corn: %s\nSession: <b>+%d</b>", slaps, glove, tostring(candy or 0), session)
+        if statsLabel.Text ~= text then statsLabel.Text = text end
+    end
+
+    task.spawn(function()
+        while not unloaded do
+            local on = Toggles.GameStats_Enabled and Toggles.GameStats_Enabled.Value
+            if on then
+                if not statsGui then createStatsHud() end
+                updateStatsHud()
+            elseif statsGui then
+                destroyStatsHud()
+            end
+            task.wait(0.5)
+        end
+        destroyStatsHud()
+    end)
+    onCleanup(destroyStatsHud)
+
+    local StatsBox = addGroup(GameTab, "Right", "Slap Stats HUD", "activity")
+    StatsBox:AddToggle("GameStats_Enabled", { Text="Show Stats HUD", Default=false })
+    StatsBox:AddButton({ Text="Reset Session", Func=function()
+        local stats = LocalPlayer:FindFirstChild("leaderstats")
+        local slapsObj = stats and stats:FindFirstChild("Slaps")
+        statsStartSlaps = slapsObj and tonumber(slapsObj.Value) or 0
+    end })
+    StatsBox:AddLabel({ Text="Draggable HUD with your slaps, glove, candy corn, and session slap gain. Local only.", DoesWrap=true })
+
+    ----------------------------------------------------------
+    -- DAILY REWARD
+    ----------------------------------------------------------
+    local dailyStatusLabel = nil
+    local dailyLastStatus = ""
+    local dailyBusy = false
+
+    local function setDailyStatus(text)
+        if text ~= dailyLastStatus then
+            dailyLastStatus = text
+            pcall(function() dailyStatusLabel:SetText("Daily: "..text) end)
+        end
+    end
+
+    local function claimDaily(auto)
+        if dailyBusy then return end
+        dailyBusy = true
+        local ok, res = gameNetworkInvoke("ClaimDailyReward")
+        dailyBusy = false
+        if ok then
+            setDailyStatus(auto and "auto checked" or "claimed")
+            if not auto then Library:Notify("Daily reward claimed", 4) end
+        else
+            setDailyStatus("failed")
+            if not auto then Library:Notify("Daily reward failed: "..tostring(res), 5) end
+        end
+    end
+
+    local RewardsBox = addGroup(GameTab, "Right", "Daily Reward", "gift")
+    RewardsBox:AddButton({ Text="Claim Daily Reward", Func=function() task.spawn(function() claimDaily(false) end) end })
+    RewardsBox:AddToggle("GameDaily_Auto", { Text="Auto Claim Daily Reward", Default=false, Callback=function(on)
+        if on then task.spawn(function() claimDaily(true) end) end
+    end })
+    dailyStatusLabel = RewardsBox:AddLabel("Daily: not checked")
+    RewardsBox:AddLabel({ Text="Calls the game's ClaimDailyReward remote. The server still decides if a reward is available.", DoesWrap=true })
+
+    task.spawn(function()
+        local last = 0
+        while not unloaded do
+            local on = Toggles.GameDaily_Auto and Toggles.GameDaily_Auto.Value
+            if on and os.clock() - last > 600 then
+                last = os.clock()
+                claimDaily(true)
+            end
+            task.wait(1)
+        end
+    end)
+
+    ----------------------------------------------------------
+    -- GLOVE EQUIP
+    ----------------------------------------------------------
+    local gloveStatusLabel = nil
+    local gloveLastStatus = ""
+
+    local function currentGlove()
+        local stats = LocalPlayer:FindFirstChild("leaderstats")
+        local gloveObj = stats and stats:FindFirstChild("Glove")
+        return gloveObj and tostring(gloveObj.Value) or tostring(LocalPlayer:GetAttribute("Glove") or "?")
+    end
+
+    local function ownedGloves()
+        local list, seen = {}, {}
+        local folder = LocalPlayer:FindFirstChild("_unlockedGloves")
+        if folder then
+            for _, child in ipairs(folder:GetChildren()) do
+                if child:IsA("BoolValue") and child.Value and not seen[child.Name] then
+                    seen[child.Name] = true
+                    table.insert(list, child.Name)
+                end
+            end
+        end
+        local current = currentGlove()
+        if current ~= "" and current ~= "?" and not seen[current] then
+            table.insert(list, current)
+        end
+        table.sort(list, function(a, b) return string.lower(a) < string.lower(b) end)
+        if #list == 0 then table.insert(list, "Default") end
+        return list
+    end
+
+    local function setGloveStatus(text)
+        if text ~= gloveLastStatus then
+            gloveLastStatus = text
+            pcall(function() gloveStatusLabel:SetText(text) end)
+        end
+    end
+
+    local function selectedGlove()
+        local option = Options.GameGlove_Select
+        local value = option and option.Value
+        if type(value) == "table" then
+            for _, item in pairs(value) do value = item; break end
+        end
+        return value and tostring(value) or ""
+    end
+
+    local function equipGlove()
+        local name = selectedGlove()
+        name = name:gsub("^%s+", ""):gsub("%s+$", "")
+        if name == "" then
+            setGloveStatus("Current: "..currentGlove().." | select a glove")
+            return
+        end
+        if currentGlove() == name then
+            setGloveStatus("Current: "..name.." | already equipped")
+            return
+        end
+        local ok, err = gameNetworkFire("SelectGlove", name)
+        if not ok then
+            setGloveStatus("Current: "..currentGlove().." | failed")
+            Library:Notify("Equip failed: "..tostring(err), 5)
+            return
+        end
+        local deadline = os.clock() + 3
+        repeat
+            task.wait(0.1)
+        until currentGlove() == name or os.clock() >= deadline
+        if currentGlove() == name then
+            setGloveStatus("Current: "..name.." | equipped")
+            Library:Notify("Equipped "..name, 4)
+        else
+            setGloveStatus("Current: "..currentGlove().." | server did not equip "..name)
+            Library:Notify("Server did not equip "..name.." (are you in the lobby?)", 5)
+        end
+    end
+
+    local initialGloves = ownedGloves()
+    local lastGloveList = initialGloves
+    local gloveDropdown
+
+    local function refreshGloveDropdown(force)
+        if not gloveDropdown then return end
+        local list = ownedGloves()
+        if not force and #list == #lastGloveList then
+            local same = true
+            for i = 1, #list do
+                if list[i] ~= lastGloveList[i] then same = false; break end
+            end
+            if same then return end
+        end
+        lastGloveList = list
+        local selected = selectedGlove()
+        gloveDropdown:SetValues(list)
+        if selected == "" or not table.find(list, selected) then
+            gloveDropdown:SetValue(list[1])
+        end
+    end
+
+    local GloveBox = addGroup(GameTab, "Right", "Glove Equip", "hand")
+    local initialGlove = currentGlove()
+    if not table.find(initialGloves, initialGlove) then initialGlove = initialGloves[1] end
+    gloveDropdown = GloveBox:AddDropdown("GameGlove_Select", {
+        Values = initialGloves,
+        Default = initialGlove,
+        Searchable = true,
+        Text = "Owned Gloves",
+    })
+    GloveBox:AddButton({ Text="Refresh Gloves", Func=function() refreshGloveDropdown(true); Library:Notify("Glove list refreshed", 3) end })
+    GloveBox:AddButton({ Text="Equip Glove", Func=function() task.spawn(equipGlove) end })
+    gloveStatusLabel = GloveBox:AddLabel("Current: "..currentGlove())
+    GloveBox:AddLabel({ Text="Only gloves unlocked on this account are listed. Search inside the dropdown to filter them. The server still decides which gloves can be equipped.", DoesWrap=true })
+
+    task.spawn(function()
+        while not unloaded do
+            task.wait(2)
+            pcall(refreshGloveDropdown, false)
+        end
+    end)
+
+    task.spawn(function()
+        while not unloaded do
+            task.wait(1)
+            local current = currentGlove()
+            if gloveLastStatus == "" or not string.find(gloveLastStatus, "Current: "..current, 1, true) then
+                setGloveStatus("Current: "..current)
+            end
+        end
+    end)
+end
+end, function(e) return tostring(e).."\n"..debug.traceback() end)
+
+if not okGame then
+    warn("[Chillhub] Game tab failed:", gameErr)
+end
+
+------------------------------------------------------------
+-- QOL TAB
+------------------------------------------------------------
+do
+    local AntiAfkBox = addGroup(QoLTab, "Left", "Anti-AFK", "coffee")
+    AntiAfkBox:AddToggle("QoL_AntiAfk", { Text="Anti-AFK", Default=true })
+    connect(LocalPlayer.Idled, function()
+        if not Toggles.QoL_AntiAfk or not Toggles.QoL_AntiAfk.Value then return end
+        pcall(function()
+            local vu = game:GetService("VirtualUser")
+            vu:CaptureController()
+            vu:ClickButton2(Vector2.new())
+        end)
+    end)
+
+    local FpsBox = addGroup(QoLTab, "Left", "FPS", "monitor")
+    local function applyFps()
+        local cap = 0
+        if Toggles.QoL_FpsCap and Toggles.QoL_FpsCap.Value then cap = tonumber(Options.QoL_FpsValue.Value) or 120 end
+        pcall(function() if type(setfpscap) == "function" then setfpscap(cap) end end)
+    end
+    FpsBox:AddToggle("QoL_FpsCap", { Text="FPS Cap", Default=false, Callback=function() applyFps() end })
+    FpsBox:AddInput("QoL_FpsValue", { Text="FPS", Default="120", Numeric=true, Finished=false, Placeholder="30-360", Callback=function() applyFps() end })
+    onCleanup(function() pcall(function() if type(setfpscap) == "function" then setfpscap(0) end end) end)
+
+    local VisualBox = addGroup(QoLTab, "Right", "Visuals", "eye")
+    local savedFog = nil
+    VisualBox:AddToggle("QoL_NoFog", { Text="No Fog", Default=false, Callback=function(on)
+        if on then
+            savedFog = { FogEnd = Lighting.FogEnd, FogStart = Lighting.FogStart }
+            Lighting.FogEnd = 1e6; Lighting.FogStart = 1e6
+        elseif savedFog then
+            Lighting.FogEnd = savedFog.FogEnd; Lighting.FogStart = savedFog.FogStart
+            savedFog = nil
+        end
+    end })
+    onCleanup(function()
+        if savedFog then Lighting.FogEnd = savedFog.FogEnd; Lighting.FogStart = savedFog.FogStart end
+    end)
+
+    local savedLight = nil
+    VisualBox:AddToggle("QoL_Fullbright", { Text="Fullbright", Default=false, Callback=function(on)
+        if on then
+            savedLight = {
+                Brightness = Lighting.Brightness,
+                Ambient = Lighting.Ambient,
+                OutdoorAmbient = Lighting.OutdoorAmbient,
+                ClockTime = Lighting.ClockTime,
+            }
+            Lighting.Brightness = 3
+            Lighting.Ambient = Color3.fromRGB(180, 180, 180)
+            Lighting.OutdoorAmbient = Color3.fromRGB(180, 180, 180)
+            Lighting.ClockTime = 12
+        elseif savedLight then
+            for k, v in pairs(savedLight) do Lighting[k] = v end
+            savedLight = nil
+        end
+    end })
+    onCleanup(function()
+        if savedLight then for k, v in pairs(savedLight) do Lighting[k] = v end end
+    end)
+
+    local UtilBox = addGroup(QoLTab, "Right", "Utility", "wrench")
+    UtilBox:AddButton({ Text="Reset Character", Func=function()
+        local h = getHumanoid(); if h then h.Health = 0 end
+    end })
+    UtilBox:AddButton({ Text="Rejoin Server", Func=function()
+        pcall(function() TeleportService:Teleport(game.PlaceId, LocalPlayer) end)
+    end })
+    UtilBox:AddButton({ Text="Unload UI", Func=function()
+        pcall(function() Library:Unload() end)
+    end })
+end
+
+------------------------------------------------------------
+-- SETTINGS TAB
+------------------------------------------------------------
+do
+    local MenuGroup = addGroup(SettingsTab, "Right", "Menu", "menu")
+    MenuGroup:AddButton({ Text="Turn Off All Features", Func=function()
+        local names = {
+            "Universal_Speed_Enabled", "Universal_Jump_Enabled", "Universal_Noclip",
+            "Universal_Flying_Enabled", "Universal_Gravity_Enabled", "Universal_InfJump",
+            "Invis_Enabled", "Spectate_Enabled", "Attach_Enabled", "Attach_FaceTarget",
+            "CandyFarm_Enabled", "CandyFarm_Stealth", "AutoRejoin_Enabled",
+            "SelfSlapFarm_Enabled", "SlappleFarm_Enabled", "SlappleFarm_Golden", "SlappleFarm_AutoEnter",
+            "Fun_Spin", "Fun_Disco", "Fun_Rainbow", "Fun_Trail", "Fun_TrailRainbow",
+            "SlapAura_Enabled", "SlapAura_Manual", "SlapAura_Visual",
+            "GameESP_Enabled", "GameGloveNotify", "GameStats_Enabled", "GameDaily_Auto",
+            "QoL_AntiAfk", "QoL_FpsCap", "QoL_NoFog", "QoL_Fullbright",
+        }
+        for _, name in ipairs(names) do
+            local t = Toggles[name]
+            if t then pcall(function() t:SetValue(false) end) end
+        end
+        Library:Notify("All features turned off", 5)
+    end })
+    MenuGroup:AddButton({ Text="Unload Script", Func=function() Library:Unload() end })
+    pcall(function()
+        MenuGroup:AddToggle("KeybindMenuOpen", { Text="Show Keybind List", Default=Library.KeybindFrame.Visible, Callback=function(v)
+            Library.KeybindFrame.Visible = v
+        end })
+    end)
+    MenuGroup:AddDropdown("NotificationSide", { Text="Notification Side", Values={"Left","Right"}, Default="Right", Callback=function(v)
+        pcall(function() Library:SetNotifySide(v) end)
+    end })
+    MenuGroup:AddDropdown("DPIDropdown", { Text="DPI Scale", Values={"50%","75%","100%","125%","150%","175%","200%"}, Default="100%", Callback=function(v)
+        local n = tonumber((tostring(v):gsub("%%", ""))) or 100
+        pcall(function() Library:SetDPIScale(n) end)
+    end })
+
+    if okTheme and ThemeManager then
+        pcall(function()
+            ThemeManager:SetLibrary(Library)
+            ThemeManager:SetFolder("ChillhubTSB")
+            ThemeManager:ApplyToTab(SettingsTab)
+        end)
+    else
+        warn("[Chillhub] ThemeManager failed to load")
+    end
+
+    if okSave and SaveManager then
+        pcall(function()
+            SaveManager:SetLibrary(Library)
+            SaveManager:IgnoreThemeSettings()
+            SaveManager:SetIgnoreIndexes({"MenuKeybind", "QoL_Theme"})
+            SaveManager:SetFolder("ChillhubTSB")
+            SaveManager:BuildConfigSection(SettingsTab)
+            SaveManager:LoadAutoloadConfig()
+        end)
+    else
+        warn("[Chillhub] SaveManager failed to load")
+    end
+
+    pcall(function()
+        Library.Scheme.AccentColor = ACCENT
+        Library:UpdateColorsUsingRegistry()
+    end)
+end
+
+Library:OnUnload(function()
+    unloaded = true
+    for _, c in ipairs(connections) do pcall(function() c:Disconnect() end) end
+    for _, fn in ipairs(cleanupFns) do pcall(fn) end
+    if getgenv().Library == Library then getgenv().Library = nil end
+    getgenv().ChillhubLoaded = false
+end)
+
+end -- buildUI
+
+local okBuild, buildErr = xpcall(buildUI, function(e) return tostring(e).."\n"..debug.traceback() end)
+if not okBuild then
+    warn("[Chillhub] UI build failed:", buildErr)
+    pcall(function() Loading:ShowErrorPage(true); Loading:SetErrorMessage("Failed to build the UI, check the console (F9) for details.") end)
+    return
+end
+
+pcall(function() Loading:SetCurrentStep(3); Loading:Continue() end)
+getgenv().ChillhubLoaded = true
+getgenv().Library = Library
+getgenv().ChillhubUnload = function()
+    pcall(function() Library:Unload() end)
+    getgenv().ChillhubLoaded = false
+end
+Library:Notify("Chillhub Slap Battles loaded", 6)
