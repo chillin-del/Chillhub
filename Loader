@@ -7,6 +7,7 @@ local SCRIPT_HUB = {
     [9015014224] = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/Slap%20battles",
     [6403373529] = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/Slap%20battles",
     [11520107397] = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/Slap%20battles",
+    [6447798030] = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/FNF",
 }
 
 local UNIVERSAL_URL = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/Universal"
@@ -24,4 +25,4 @@ if not success then
     pcall(function()
         loadstring(game:HttpGet(UNIVERSAL_URL))()
     end)
-end
+end   
