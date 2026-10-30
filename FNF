@@ -1,0 +1,290 @@
+-- Funky Friday autoplay (client-side)
+-- F2 toggles autoplay on/off.
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+
+local LANES = {"Lane1", "Lane2", "Lane3", "Lane4"}
+local KEYS = {Enum.KeyCode.A, Enum.KeyCode.S, Enum.KeyCode.W, Enum.KeyCode.D}
+local TOGGLE_KEY = Enum.KeyCode.F2
+local TAP_HOLD = 0.02
+
+if getgenv().FF_Autoplay then
+    pcall(function() getgenv().FF_Autoplay.connection:Disconnect() end)
+    pcall(function() getgenv().FF_Autoplay.gui:Destroy() end)
+end
+
+local state = {
+    enabled = true,
+    side = nil,
+    window = nil,
+    notes = setmetatable({}, {__mode = "k"}),
+    holds = {},
+    keyDown = {false, false, false, false},
+    pressId = {0, 0, 0, 0},
+    lastDetect = 0,
+    stats = {presses = 0, holds = 0, errSum = 0, errN = 0, lastErr = 0},
+}
+
+local function getWindow()
+    local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
+    return pg and pg:FindFirstChild("Window")
+end
+
+local function releaseLane(i)
+    if state.keyDown[i] then
+        state.keyDown[i] = false
+        state.holds[i] = nil
+        pcall(function() VirtualInputManager:SendKeyEvent(false, KEYS[i], false, game) end)
+    end
+end
+
+local function tapLane(i)
+    releaseLane(i)
+    state.pressId[i] = state.pressId[i] + 1
+    local id = state.pressId[i]
+    state.keyDown[i] = true
+    VirtualInputManager:SendKeyEvent(true, KEYS[i], false, game)
+    task.delay(TAP_HOLD, function()
+        if state.pressId[i] == id and state.keyDown[i] and not state.holds[i] then
+            state.keyDown[i] = false
+            pcall(function() VirtualInputManager:SendKeyEvent(false, KEYS[i], false, game) end)
+        end
+    end)
+end
+
+local function holdLane(i, note)
+    releaseLane(i)
+    state.pressId[i] = state.pressId[i] + 1
+    state.keyDown[i] = true
+    state.holds[i] = {note = note, name = note.Name}
+    VirtualInputManager:SendKeyEvent(true, KEYS[i], false, game)
+end
+
+local function isHold(note)
+    for _, c in ipairs(note:GetChildren()) do
+        if c.Name == "LayeredSprite" and c:IsA("Frame") and c.Size.Y.Scale > 1.5 then
+            return true
+        end
+    end
+    return false
+end
+
+local function receptorActive(gameGui, side, laneName)
+    local lane = gameGui.Fields[side].Inner[laneName]
+    local rec = lane and lane:FindFirstChild("Receptor")
+    if not rec then return false end
+    for _, d in ipairs(rec:GetDescendants()) do
+        if d:IsA("ImageLabel") and d.ImageTransparency < 0.5 then
+            return true
+        end
+    end
+    return false
+end
+
+local function receptorIdle(gameGui, side, laneName)
+    local lane = gameGui.Fields[side].Inner[laneName]
+    local rec = lane and lane:FindFirstChild("Receptor")
+    if not rec then return true end
+    for _, d in ipairs(rec:GetDescendants()) do
+        if d:IsA("ImageLabel") and d.ImageTransparency < 0.9 then
+            return false
+        end
+    end
+    return true
+end
+
+local function noteNearLine(gameGui, side, laneName, dist)
+    local lane = gameGui.Fields[side].Inner[laneName]
+    local rec = lane and lane:FindFirstChild("Receptor")
+    local notes = lane and lane:FindFirstChild("Notes")
+    if not (rec and notes) then return false end
+    local recY = rec.AbsolutePosition.Y + rec.AbsoluteSize.Y / 2
+    for _, n in ipairs(notes:GetChildren()) do
+        local cy = n.AbsolutePosition.Y + n.AbsoluteSize.Y / 2
+        if math.abs(cy - recY) < dist then
+            return true
+        end
+    end
+    return false
+end
+
+local function sideFromScores(gameGui)
+    local hud = gameGui:FindFirstChild("HUD")
+    local scores = hud and hud:FindFirstChild("Scores")
+    if not scores then return nil end
+    local pl = Players.LocalPlayer
+    for _, side in ipairs({"Left", "Right"}) do
+        local s = scores:FindFirstChild(side)
+        if s then
+            for _, c in ipairs(s:GetChildren()) do
+                if c.Name == pl.DisplayName or c.Name == pl.Name then
+                    return side
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function pressDetect(gameGui)
+    if not (receptorIdle(gameGui, "Right", "Lane1") and receptorIdle(gameGui, "Left", "Lane1")) then
+        return nil
+    end
+    if noteNearLine(gameGui, "Right", "Lane1", 120) or noteNearLine(gameGui, "Left", "Lane1", 120) then
+        return nil
+    end
+    tapLane(1)
+    local t = os.clock()
+    while os.clock() - t < 0.15 do
+        for _, s in ipairs({"Right", "Left"}) do
+            if receptorActive(gameGui, s, "Lane1") then
+                return s
+            end
+        end
+        task.wait(0.01)
+    end
+    return nil
+end
+
+local function releaseFinishedHolds()
+    for i, hold in pairs(state.holds) do
+        local n = hold.note
+        if not n or not n.Parent or n.Name ~= hold.name then
+            releaseLane(i)
+        end
+    end
+end
+
+local function autoplay(gameGui, dt)
+    local sideF = gameGui.Fields:FindFirstChild(state.side)
+    local inner = sideF and sideF:FindFirstChild("Inner")
+    if not inner then return end
+    for i, laneName in ipairs(LANES) do
+        local lane = inner:FindFirstChild(laneName)
+        local rec = lane and lane:FindFirstChild("Receptor")
+        local notes = lane and lane:FindFirstChild("Notes")
+        if rec and notes then
+            local recY = rec.AbsolutePosition.Y + rec.AbsoluteSize.Y / 2
+            for _, n in ipairs(notes:GetChildren()) do
+                local cy = n.AbsolutePosition.Y + n.AbsoluteSize.Y / 2
+                local info = state.notes[n]
+                if not info or info.name ~= n.Name then
+                    info = {name = n.Name, pressed = false, lastY = nil}
+                    state.notes[n] = info
+                end
+                local prevY = info.lastY
+                local vel = prevY and (cy - prevY) / dt or 0
+                info.lastY = cy
+                if not info.pressed then
+                    local fd = math.abs(vel) * dt
+                    local crossed = prevY and prevY < recY and cy >= recY
+                    local justPast = cy >= recY and (cy - recY) <= math.max(8, fd)
+                    local win = math.max(5, fd * 0.5)
+                    if crossed or justPast or math.abs(cy - recY) <= win then
+                        info.pressed = true
+                        state.stats.presses = state.stats.presses + 1
+                        if vel ~= 0 then
+                            state.stats.lastErr = (cy - recY) / vel * 1000
+                            state.stats.errSum = state.stats.errSum + state.stats.lastErr
+                            state.stats.errN = state.stats.errN + 1
+                        end
+                        if isHold(n) then
+                            state.stats.holds = state.stats.holds + 1
+                            holdLane(i, n)
+                        else
+                            tapLane(i)
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+local pg = Players.LocalPlayer:WaitForChild("PlayerGui")
+local gui = Instance.new("ScreenGui")
+gui.Name = "FF_Autoplay"
+gui.ResetOnSpawn = false
+gui.DisplayOrder = 999
+gui.IgnoreGuiInset = true
+gui.Parent = pg
+
+local label = Instance.new("TextLabel")
+label.Size = UDim2.fromOffset(250, 24)
+label.Position = UDim2.new(0, 10, 0, 10)
+label.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+label.BackgroundTransparency = 0.35
+label.TextColor3 = Color3.fromRGB(120, 255, 120)
+label.Font = Enum.Font.GothamBold
+label.TextSize = 14
+label.Text = "AUTOPLAY: ON (F2)"
+label.Parent = gui
+
+local function refreshLabel()
+    if not state.enabled then
+        label.Text = "AUTOPLAY: OFF (F2)"
+        label.TextColor3 = Color3.fromRGB(255, 120, 120)
+    else
+        label.Text = "AUTOPLAY: ON (F2)" .. (state.side and (" [" .. state.side:sub(1, 1) .. "]") or " [...]")
+        label.TextColor3 = Color3.fromRGB(120, 255, 120)
+    end
+end
+
+local conn
+conn = RunService.Heartbeat:Connect(function(dt)
+    pcall(function()
+        local win = getWindow()
+        if not win then
+            for i = 1, 4 do releaseLane(i) end
+            state.side = nil
+            state.window = nil
+            table.clear(state.notes)
+            return
+        end
+        if state.window ~= win then
+            for i = 1, 4 do releaseLane(i) end
+            state.window = win
+            state.side = nil
+            table.clear(state.notes)
+        end
+        local g = win:FindFirstChild("Game")
+        if not g then return end
+        if not state.enabled then return end
+
+        local s = sideFromScores(g)
+        if s then
+            state.side = s
+        elseif not state.side then
+            if os.clock() - state.lastDetect > 0.4 then
+                state.lastDetect = os.clock()
+                state.side = pressDetect(g)
+            end
+        end
+
+        if state.side then
+            releaseFinishedHolds()
+            autoplay(g, dt)
+        end
+    end)
+    refreshLabel()
+end)
+
+UserInputService.InputBegan:Connect(function(input)
+    if input.KeyCode == TOGGLE_KEY then
+        state.enabled = not state.enabled
+        if not state.enabled then
+            for i = 1, 4 do releaseLane(i) end
+            state.side = nil
+            table.clear(state.notes)
+        end
+        refreshLabel()
+        print("[FF Autoplay] " .. (state.enabled and "ON" or "OFF"))
+    end
+end)
+
+getgenv().FF_Autoplay = {connection = conn, gui = gui, state = state}
+refreshLabel()
+print("[FF Autoplay] loaded - press F2 to toggle")
