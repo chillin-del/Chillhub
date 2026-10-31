@@ -4,16 +4,34 @@
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local VirtualInputManager = game:GetService("VirtualInputManager")
+local okVIM, vimService = pcall(function()
+    return game:GetService("VirtualInputManager")
+end)
+local VirtualInputManager = okVIM and vimService or nil
 
 local LANES = {"Lane1", "Lane2", "Lane3", "Lane4"}
 local KEYS = {Enum.KeyCode.A, Enum.KeyCode.S, Enum.KeyCode.W, Enum.KeyCode.D}
-local TOGGLE_KEY = Enum.KeyCode.F2
 local TAP_HOLD = 0.02
+local LOGO_ASSET_ID = "rbxassetid://83288538700579"
 
-if getgenv().FF_Autoplay then
-    pcall(function() getgenv().FF_Autoplay.connection:Disconnect() end)
-    pcall(function() getgenv().FF_Autoplay.gui:Destroy() end)
+local function genv()
+    if type(getgenv) == "function" then
+        return getgenv()
+    end
+    return _G
+end
+
+local function sendKey(down, key)
+    if not VirtualInputManager then return end
+    pcall(function() VirtualInputManager:SendKeyEvent(down, key, false, game) end)
+end
+
+if genv().FF_Autoplay then
+    local old = genv().FF_Autoplay
+    genv().FF_Autoplay = nil
+    pcall(function() old.connection:Disconnect() end)
+    pcall(function() old.library:Unload() end)
+    pcall(function() old.gui:Destroy() end)
 end
 
 local state = {
@@ -25,8 +43,17 @@ local state = {
     keyDown = {false, false, false, false},
     pressId = {0, 0, 0, 0},
     lastDetect = 0,
+    tapHold = TAP_HOLD,
+    winMult = 1,
     stats = {presses = 0, holds = 0, errSum = 0, errN = 0, lastErr = 0},
 }
+
+-- table.clear() rejects weak-table types in the Luau checker, so clear manually.
+local function clearNotes()
+    for k in pairs(state.notes) do
+        state.notes[k] = nil
+    end
+end
 
 local function getWindow()
     local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
@@ -37,7 +64,7 @@ local function releaseLane(i)
     if state.keyDown[i] then
         state.keyDown[i] = false
         state.holds[i] = nil
-        pcall(function() VirtualInputManager:SendKeyEvent(false, KEYS[i], false, game) end)
+        sendKey(false, KEYS[i])
     end
 end
 
@@ -46,11 +73,12 @@ local function tapLane(i)
     state.pressId[i] = state.pressId[i] + 1
     local id = state.pressId[i]
     state.keyDown[i] = true
-    VirtualInputManager:SendKeyEvent(true, KEYS[i], false, game)
-    task.delay(TAP_HOLD, function()
+    sendKey(true, KEYS[i])
+    local holdTime = math.clamp(state.tapHold or TAP_HOLD, 0.005, 0.2)
+    task.delay(holdTime, function()
         if state.pressId[i] == id and state.keyDown[i] and not state.holds[i] then
             state.keyDown[i] = false
-            pcall(function() VirtualInputManager:SendKeyEvent(false, KEYS[i], false, game) end)
+            sendKey(false, KEYS[i])
         end
     end)
 end
@@ -60,7 +88,7 @@ local function holdLane(i, note)
     state.pressId[i] = state.pressId[i] + 1
     state.keyDown[i] = true
     state.holds[i] = {note = note, name = note.Name}
-    VirtualInputManager:SendKeyEvent(true, KEYS[i], false, game)
+    sendKey(true, KEYS[i])
 end
 
 local function isHold(note)
@@ -182,7 +210,7 @@ local function autoplay(gameGui, dt)
                     local fd = math.abs(vel) * dt
                     local crossed = prevY and prevY < recY and cy >= recY
                     local justPast = cy >= recY and (cy - recY) <= math.max(8, fd)
-                    local win = math.max(5, fd * 0.5)
+                    local win = math.max(5, fd * 0.5) * (state.winMult or 1)
                     if crossed or justPast or math.abs(cy - recY) <= win then
                         info.pressed = true
                         state.stats.presses = state.stats.presses + 1
@@ -204,36 +232,151 @@ local function autoplay(gameGui, dt)
     end
 end
 
-local pg = Players.LocalPlayer:WaitForChild("PlayerGui")
-local gui = Instance.new("ScreenGui")
-gui.Name = "FF_Autoplay"
-gui.ResetOnSpawn = false
-gui.DisplayOrder = 999
-gui.IgnoreGuiInset = true
-gui.Parent = pg
+------------------------------------------------------------
+-- UI (Obsidian, same look as the TSB script)
+------------------------------------------------------------
+local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+local okLib, Library = pcall(function() return loadstring(game:HttpGet(repo.."Library.lua"))() end)
+if not okLib or not Library then
+    error("[FF Autoplay] failed to load UI library: "..tostring(Library))
+end
+local okTheme, ThemeManager = pcall(function() return loadstring(game:HttpGet(repo.."addons/ThemeManager.lua"))() end)
 
-local label = Instance.new("TextLabel")
-label.Size = UDim2.fromOffset(250, 24)
-label.Position = UDim2.new(0, 10, 0, 10)
-label.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-label.BackgroundTransparency = 0.35
-label.TextColor3 = Color3.fromRGB(120, 255, 120)
-label.Font = Enum.Font.GothamBold
-label.TextSize = 14
-label.Text = "AUTOPLAY: ON (F2)"
-label.Parent = gui
+local Options = Library.Options
+local Toggles = Library.Toggles
 
-local function refreshLabel()
-    if not state.enabled then
-        label.Text = "AUTOPLAY: OFF (F2)"
-        label.TextColor3 = Color3.fromRGB(255, 120, 120)
-    else
-        label.Text = "AUTOPLAY: ON (F2)" .. (state.side and (" [" .. state.side:sub(1, 1) .. "]") or " [...]")
-        label.TextColor3 = Color3.fromRGB(120, 255, 120)
-    end
+local Window = Library:CreateWindow({
+    Title         = "Funky Friday",
+    Footer        = "Chillhub Autoplay",
+    ToggleKeybind = Enum.KeyCode.P,
+    Center        = true,
+    AutoShow      = true,
+    Icon          = LOGO_ASSET_ID,
+})
+
+local _menuLast = 0
+Library.ToggleCallback = function()
+    local now = os.clock()
+    if now - _menuLast < 0.3 then return false end
+    _menuLast = now
+    return true
 end
 
+pcall(function()
+    if okTheme and ThemeManager then
+        ThemeManager:SetLibrary(Library)
+        ThemeManager:ApplyTheme("Tokyo Night")
+    end
+end)
+
 local conn
+local refreshStatus = function() end
+
+local AutoplayTab = Window:AddTab("Autoplay", "music")
+local SettingsTab = Window:AddTab("Settings", "settings")
+
+local ControlsBox = AutoplayTab:AddLeftGroupbox("Autoplay")
+
+ControlsBox:AddToggle("FF_Autoplay", {
+    Text = "Enable Autoplay",
+    Default = true,
+    Callback = function(v)
+        state.enabled = v
+        if not v then
+            for i = 1, 4 do releaseLane(i) end
+            state.side = nil
+            clearNotes()
+        end
+        refreshStatus()
+    end,
+}):AddKeyPicker("FF_Autoplay_Key", {
+    Default = "F2",
+    Mode = "Toggle",
+    SyncToggleState = true,
+    Text = "Autoplay Key",
+})
+
+ControlsBox:AddSlider("FF_TapHold", {
+    Text = "Tap Hold",
+    Default = 20,
+    Min = 5,
+    Max = 120,
+    Rounding = 0,
+    Suffix = " ms",
+    Callback = function(v) state.tapHold = v / 1000 end,
+})
+
+ControlsBox:AddSlider("FF_HitWindow", {
+    Text = "Hit Window",
+    Default = 1,
+    Min = 0.2,
+    Max = 3,
+    Rounding = 1,
+    Suffix = "x",
+    Callback = function(v) state.winMult = v end,
+})
+
+ControlsBox:AddButton({
+    Text = "Reset Stats",
+    Func = function()
+        state.stats.presses = 0
+        state.stats.holds = 0
+        state.stats.errSum = 0
+        state.stats.errN = 0
+        state.stats.lastErr = 0
+        refreshStatus()
+    end,
+})
+
+local StatusBox = AutoplayTab:AddRightGroupbox("Status")
+local stateLabel = StatusBox:AddLabel("Autoplay: ON")
+local sideLabel  = StatusBox:AddLabel("Side: --")
+local pressLabel = StatusBox:AddLabel("Presses: 0")
+local holdLabel  = StatusBox:AddLabel("Holds: 0")
+local errLabel   = StatusBox:AddLabel("Avg error: -- ms")
+local noteLabel  = StatusBox:AddLabel("Notes tracked: 0")
+
+local InfoBox = AutoplayTab:AddRightGroupbox("Info")
+InfoBox:AddLabel("Auto-detects your side")
+InfoBox:AddLabel("Long notes are held automatically")
+InfoBox:AddLabel("Autoplay key: F2")
+InfoBox:AddLabel("Menu key: P")
+
+local SettingsBox = SettingsTab:AddLeftGroupbox("Script")
+SettingsBox:AddButton({
+    Text = "Unload Script",
+    Func = function()
+        for i = 1, 4 do releaseLane(i) end
+        pcall(function() conn:Disconnect() end)
+        genv().FF_Autoplay = nil
+        pcall(function() Library:Unload() end)
+    end,
+})
+
+local CreditsBox = SettingsTab:AddRightGroupbox("About")
+CreditsBox:AddLabel("Funky Friday autoplay")
+CreditsBox:AddLabel("Obsidian UI")
+CreditsBox:AddLabel("Client-side only")
+
+local function countNotes()
+    local n = 0
+    for _ in pairs(state.notes) do n = n + 1 end
+    return n
+end
+
+function refreshStatus()
+    if not stateLabel then return end
+    stateLabel:SetText("Autoplay: "..(state.enabled and "ON" or "OFF"))
+    sideLabel:SetText("Side: "..(state.side or "--"))
+    pressLabel:SetText("Presses: "..state.stats.presses)
+    holdLabel:SetText("Holds: "..state.stats.holds)
+    local avg = state.stats.errN > 0 and (state.stats.errSum / state.stats.errN) or nil
+    errLabel:SetText("Avg error: "..(avg and string.format("%.1f ms", avg) or "-- ms"))
+    noteLabel:SetText("Notes tracked: "..countNotes())
+end
+
+local uiAccum = 0
+
 conn = RunService.Heartbeat:Connect(function(dt)
     pcall(function()
         local win = getWindow()
@@ -241,14 +384,14 @@ conn = RunService.Heartbeat:Connect(function(dt)
             for i = 1, 4 do releaseLane(i) end
             state.side = nil
             state.window = nil
-            table.clear(state.notes)
+            clearNotes()
             return
         end
         if state.window ~= win then
             for i = 1, 4 do releaseLane(i) end
             state.window = win
             state.side = nil
-            table.clear(state.notes)
+            clearNotes()
         end
         local g = win:FindFirstChild("Game")
         if not g then return end
@@ -269,22 +412,13 @@ conn = RunService.Heartbeat:Connect(function(dt)
             autoplay(g, dt)
         end
     end)
-    refreshLabel()
-end)
-
-UserInputService.InputBegan:Connect(function(input)
-    if input.KeyCode == TOGGLE_KEY then
-        state.enabled = not state.enabled
-        if not state.enabled then
-            for i = 1, 4 do releaseLane(i) end
-            state.side = nil
-            table.clear(state.notes)
-        end
-        refreshLabel()
-        print("[FF Autoplay] " .. (state.enabled and "ON" or "OFF"))
+    uiAccum = uiAccum + dt
+    if uiAccum >= 0.15 then
+        uiAccum = 0
+        refreshStatus()
     end
 end)
 
-getgenv().FF_Autoplay = {connection = conn, gui = gui, state = state}
-refreshLabel()
-print("[FF Autoplay] loaded - press F2 to toggle")
+genv().FF_Autoplay = {connection = conn, library = Library, state = state}
+refreshStatus()
+print("[FF Autoplay] loaded - F2 toggles autoplay, P opens the menu")
