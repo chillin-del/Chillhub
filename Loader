@@ -1,13 +1,13 @@
 -- ChillHub Master Loader
 
 local SCRIPT_HUB = {
-    [18687417158] = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/Forsaken",
-    [10449761463] = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/tsb",
+    [18687417158] = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/Forsaken", --Forsaken
+    [10449761463] = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/tsb", --Tsb
     [131048399685555] = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/tsb", -- TSB VC Servers
-    [9015014224] = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/Slap%20battles",
-    [6403373529] = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/Slap%20battles",
-    [11520107397] = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/Slap%20battles",
-    [6447798030] = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/FNF",
+    [9015014224] = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/Slap%20battles", -- Slap battles
+    [6403373529] = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/Slap%20battles", -- Slap battles VC
+    [11520107397] = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/Slap%20battles", -- Slap battle randomizer gameode?
+    [6447798030] = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/FNF", -- Funky friday
 }
 
 local UNIVERSAL_URL = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/Universal"
@@ -25,4 +25,4 @@ if not success then
     pcall(function()
         loadstring(game:HttpGet(UNIVERSAL_URL))()
     end)
-end   
+end 
