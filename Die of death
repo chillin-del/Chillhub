@@ -1,0 +1,1921 @@
+------------------------------------------------------------
+-- Chillhub Simple Edition
+-- Game: Die of Death
+-- Tabs: Home, Visuals, QoL, Fun, Game, Anti, Settings
+------------------------------------------------------------
+
+------------------------------------------------------------
+-- SERVICES
+------------------------------------------------------------
+local RunService       = game:GetService("RunService")
+local Players          = game:GetService("Players")
+local Lighting         = game:GetService("Lighting")
+local UserInputService = game:GetService("UserInputService")
+local StarterGui       = game:GetService("StarterGui")
+local TeleportService  = game:GetService("TeleportService")
+local HttpService      = game:GetService("HttpService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local LocalPlayer = Players.LocalPlayer
+
+------------------------------------------------------------
+-- LOAD UI LIBRARY
+------------------------------------------------------------
+local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+
+local Library      = loadstring(game:HttpGet(repo .. "Library.lua"))()
+local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
+local SaveManager  = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
+
+local Options = Library.Options
+local Toggles = Library.Toggles
+
+if getgenv().ChillhubSimple_Unload then
+    pcall(getgenv().ChillhubSimple_Unload)
+    getgenv().ChillhubSimple_Unload = nil
+end
+
+getgenv().ChillhubSimple_Gen = (getgenv().ChillhubSimple_Gen or 0) + 1
+local MY_GEN = getgenv().ChillhubSimple_Gen
+
+do
+    local playerGui = LocalPlayer:WaitForChild("PlayerGui")
+    for _, gui in ipairs(playerGui:GetChildren()) do
+        if gui:IsA("ScreenGui") and (gui.Name == "ChillHUD" or gui.Name == "ChillESP") then
+            pcall(function() gui:Destroy() end)
+        end
+    end
+end
+
+------------------------------------------------------------
+-- LOADING SCREEN
+------------------------------------------------------------
+local LOGO_ASSET_ID = "rbxassetid://83288538700579"
+local UPDATE_VERSION = "9"
+
+local Loading = Library:CreateLoading({
+    Title      = "Chillhub",
+    Icon       = LOGO_ASSET_ID,
+    TotalSteps = 4,
+})
+
+-- safety net: never leave the loading screen up forever
+task.delay(90, function() pcall(function() Loading:Destroy() end) end)
+
+Loading:SetMessage("Loading Chillhub")
+Loading:SetDescription("i love you")
+task.wait(1.5)
+
+Loading:SetCurrentStep(1)
+Loading:SetDescription("Loading ya save fileeee")
+task.wait(1.5)
+
+Loading:SetCurrentStep(2)
+Loading:ShowSidebarPage(true)
+Loading.Sidebar:AddLabel("User: " .. LocalPlayer.Name)
+Loading.Sidebar:AddLabel("Update " .. UPDATE_VERSION)
+task.wait(1.5)
+
+Loading:SetCurrentStep(3)
+Loading:SetDescription("Ready!")
+task.wait(1.5)
+
+------------------------------------------------------------
+-- HELPERS
+------------------------------------------------------------
+local unloaded    = false
+local connections = {}
+local hudGui      = nil
+local espGui      = nil
+
+local function connect(signal, fn)
+    local c = signal:Connect(fn)
+    table.insert(connections, c)
+    return c
+end
+
+local function getHumanoid()
+    local c = LocalPlayer.Character
+    return c and c:FindFirstChildOfClass("Humanoid")
+end
+
+local function getRoot()
+    local c = LocalPlayer.Character
+    return c and c:FindFirstChild("HumanoidRootPart")
+end
+
+local function copy(text)
+    if type(setclipboard) == "function" then
+        setclipboard(text)
+        return true
+    end
+    return false
+end
+
+local function findChild(parent, ...)
+    local node = parent
+    for _, name in ipairs({...}) do
+        if not node then return nil end
+        node = node:FindFirstChild(name)
+    end
+    return node
+end
+
+local noclipSaved = {}
+local savedJump = nil
+
+local function setNoclip(on)
+    local character = LocalPlayer.Character
+    if not character then return end
+    if on then
+        for _, part in ipairs(character:GetDescendants()) do
+            if part:IsA("BasePart") then
+                if noclipSaved[part] == nil then
+                    noclipSaved[part] = part.CanCollide
+                end
+                part.CanCollide = false
+            end
+        end
+    else
+        for part, canCollide in pairs(noclipSaved) do
+            if part.Parent then
+                pcall(function() part.CanCollide = canCollide end)
+            end
+        end
+        noclipSaved = {}
+    end
+end
+
+local function setJump(on)
+    local hum = getHumanoid()
+    if not hum then return end
+    if on then
+        if not savedJump then
+            savedJump = { Power = hum.JumpPower, Height = hum.JumpHeight, UsePower = hum.UseJumpPower }
+        end
+        hum.UseJumpPower = true
+        hum.JumpPower = tonumber(Options.Game_JumpPower and Options.Game_JumpPower.Value) or 50
+        hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+    elseif savedJump then
+        hum.UseJumpPower = savedJump.UsePower
+        hum.JumpPower = savedJump.Power
+        hum.JumpHeight = savedJump.Height
+        savedJump = nil
+    end
+end
+
+------------------------------------------------------------
+-- DIE OF DEATH ROLES, ABILITY ESP & AUTO BLOCK HELPERS
+------------------------------------------------------------
+local KILLER_CHARACTERS = {
+    ["Pursuer"]       = true,
+    ["Badware"]       = true,
+    ["Killdroid"]     = true,
+    ["Harken"]        = true,
+    ["Artful"]        = true,
+    ["Dookie Daniel"] = true,
+    ["Ghost"]         = true,
+}
+
+local ABILITY_DISPLAY = {
+    Block           = "Block",
+    Punch           = "Punch",
+    Revolver        = "Revolver",
+    Pie             = "Pie",
+    Dash            = "Dash",
+    Cloak           = "Cloak",
+    Flashlight      = "Flashlight",
+    Bugle           = "Bugle",
+    Caretaker       = "Caretaker",
+    Hotdog          = "Hotdog",
+    BonusPad        = "Bonus Pad",
+    Adrenaline      = "Adrenaline",
+    Banana          = "Banana",
+    OneBounce       = "One Bounce",
+    Golf_Push       = "Golf Club",
+    Golf_Hit        = "Golf Club",
+    FryBomber_Swing = "FryBomber",
+    FryBomber_Throw = "FryBomber",
+    Taunt           = "Taunt",
+    Reroll          = "Reroll",
+}
+
+local ABILITY_PRIORITY = {
+    -- Real survivor abilities that put an actual model in the survivor's hand.
+    -- Shotgun removed: dev leftover in the files (no category, joke tip, never granted).
+    "Pie", "Revolver", "Punch", "Golf Club", "Flashlight",
+    "Banana", "Bonus Pad", "Cloak", "Hotdog", "Bugle", "Caretaker",
+}
+
+local ABILITY_ESP_FLAGS = {}
+local ABILITY_HIGHLIGHT_COLOR = Color3.fromRGB(255, 190, 60)
+
+local ABILITY_INTERNAL = {
+    ["Bonus Pad"]  = { "BonusPad" },
+    ["Golf Club"]  = { "Golf_Push", "Golf_Hit" },
+}
+
+-- The actual hand-held model names per ability (taken from each ability's Vanity folder).
+local ABILITY_MODELS = {
+    ["Pie"]        = { Pie = true },
+    ["Revolver"]   = { Revolver = true },
+    ["Punch"]      = { Glove = true },
+    ["Golf Club"]  = { GolfClub = true, Glove = true },
+    ["Flashlight"] = { Flashlight = true },
+    ["Banana"]     = { Banana = true },
+    ["Bonus Pad"]  = { Hammer = true },
+    ["Cloak"]      = { Cloak = true },
+    ["Hotdog"]     = { Hotdog = true },
+    ["Bugle"]      = { Bugle = true, NoisemakerRightStick = true, NoisemakerLeftStick = true },
+    ["Caretaker"]  = { CaretakerItem = true },
+}
+
+local function getPlayerRole(player)
+    if player == LocalPlayer then
+        return "You"
+    end
+
+    local character = player.Character
+    local teams = findChild(workspace, "GameAssets", "Teams")
+
+    local ghostTeam = teams and teams:FindFirstChild("Ghost")
+    if character and ghostTeam and character:IsDescendantOf(ghostTeam) then
+        return "Ghost"
+    end
+
+    local stats = player:FindFirstChild("Stats")
+    if stats then
+        local isKiller = stats:FindFirstChild("IsKiller")
+        if isKiller and (not isKiller:IsA("ValueBase") or isKiller.Value ~= false) then
+            return "Killer"
+        end
+    end
+
+    if character then
+        if character:GetAttribute("KillerName") then
+            return "Killer"
+        end
+
+        local killerTeam = teams and teams:FindFirstChild("Killer")
+        if killerTeam and character:IsDescendantOf(killerTeam) then
+            return "Killer"
+        end
+
+        local survivorTeam = teams and teams:FindFirstChild("Survivor")
+        if survivorTeam and character:IsDescendantOf(survivorTeam) then
+            return "Survivor"
+        end
+
+        if KILLER_CHARACTERS[character.Name] then
+            return "Killer"
+        end
+    end
+
+    if stats and stats:FindFirstChild("InGame") and stats.InGame.Value then
+        return "Survivor"
+    end
+
+    return "Lobby"
+end
+
+local function getEquippedAbilities(character)
+    local found = {}
+    if not character then
+        return found
+    end
+
+    local vanities = character:FindFirstChild("Vanities")
+    if vanities then
+        for _, obj in ipairs(vanities:GetDescendants()) do
+            local id = obj:GetAttribute("VanityOf")
+            local display = id and ABILITY_DISPLAY[id]
+            if display then
+                found[display] = true
+            end
+        end
+    end
+
+    return found
+end
+
+local function getAbilityText(found, character, showCooldowns)
+    local parts = {}
+    for _, display in ipairs(ABILITY_PRIORITY) do
+        if found[display] then
+            local text = display
+            if showCooldowns and character then
+                local ids = ABILITY_INTERNAL[display] or { display }
+                local cooldown = 0
+                for _, id in ipairs(ids) do
+                    local value = character:GetAttribute(id .. "Cooldown")
+                    if type(value) == "number" and value > cooldown then
+                        cooldown = value
+                    end
+                end
+                if cooldown > 0 then
+                    text = string.format("%s (%ds)", display, math.ceil(cooldown))
+                end
+            end
+            parts[#parts + 1] = text
+        end
+    end
+    return table.concat(parts, ", ")
+end
+
+local function getEnabledAbilities()
+    local enabled = {}
+    for display, flag in pairs(ABILITY_ESP_FLAGS) do
+        local toggle = Toggles[flag]
+        if not toggle or toggle.Value then
+            enabled[display] = true
+        end
+    end
+    return enabled
+end
+
+local function abilityItemVisible(item)
+    if item:IsA("BasePart") then
+        return item.Transparency < 0.99
+    end
+    for _, part in ipairs(item:GetDescendants()) do
+        if part:IsA("BasePart") and part.Transparency < 0.99 then
+            return true
+        end
+    end
+    return false
+end
+
+-- The game hides held ability items from other players. When a player uses
+-- one, temporarily un-hide it locally so it can be seen and highlighted.
+local function restoreAbilityVisibility(state, item)
+    local saved = state.forcedVisibility and state.forcedVisibility[item]
+    if not saved then
+        return
+    end
+    for part, transparency in pairs(saved) do
+        if part.Parent then
+            part.Transparency = transparency
+        end
+    end
+    state.forcedVisibility[item] = nil
+end
+
+local function forceAbilityVisible(state, item)
+    if not state.forcedVisibility then
+        state.forcedVisibility = {}
+    end
+    if state.forcedVisibility[item] then
+        return
+    end
+
+    local saved = {}
+    local function hide(part)
+        if part:IsA("BasePart") then
+            saved[part] = part.Transparency
+            part.Transparency = 0
+        end
+    end
+
+    if item:IsA("BasePart") then
+        hide(item)
+    else
+        for _, descendant in ipairs(item:GetDescendants()) do
+            hide(descendant)
+        end
+    end
+
+    state.forcedVisibility[item] = saved
+end
+
+-- An ability counts as "being used" when one of its cooldowns jumps up,
+-- or when the character exposes a Holding<Ability> attribute.
+local function getActiveAbilities(state, character)
+    local active = {}
+    state.lastCooldowns = state.lastCooldowns or {}
+
+    for display in pairs(ABILITY_MODELS) do
+        local holdingName = "Holding" .. display:gsub("%s+", "")
+        if character:GetAttribute(holdingName) == true then
+            active[display] = true
+        end
+
+        for _, internal in ipairs(ABILITY_INTERNAL[display] or { display }) do
+            local value = character:GetAttribute(internal .. "Cooldown")
+            local previous = state.lastCooldowns[internal] or 0
+            if type(value) == "number" then
+                if value > 0.5 and value > previous + 0.75 then
+                    state.usedAt = state.usedAt or {}
+                    state.usedAt[display] = os.clock() + 2.2
+                end
+                state.lastCooldowns[internal] = value
+            else
+                state.lastCooldowns[internal] = 0
+            end
+        end
+    end
+
+    for display, expires in pairs(state.usedAt or {}) do
+        if os.clock() < expires then
+            active[display] = true
+        else
+            state.usedAt[display] = nil
+        end
+    end
+
+    return active
+end
+
+local function updateAbilityHighlights(state, character, enabled, parent)
+    local active = getActiveAbilities(state, character)
+
+    -- Put back anything we un-hid once its ability is no longer being used.
+    for item in pairs(state.forcedVisibility or {}) do
+        local id = item.Parent and item:GetAttribute("VanityOf")
+        local display = id and ABILITY_DISPLAY[id]
+        if not (display and active[display] and enabled[display]) then
+            restoreAbilityVisibility(state, item)
+        end
+    end
+
+    local wanted = {}
+    local vanities = character and character:FindFirstChild("Vanities")
+
+    if vanities then
+        for _, item in ipairs(vanities:GetChildren()) do
+            local id = item:GetAttribute("VanityOf")
+            local display = id and ABILITY_DISPLAY[id]
+            local models = display and ABILITY_MODELS[display]
+
+            if models and models[item.Name] and enabled[display]
+                and (item:IsA("BasePart") or item:IsA("Model"))
+            then
+                local visible = abilityItemVisible(item)
+                if active[display] or visible then
+                    wanted[item] = true
+                    if active[display] and not visible then
+                        forceAbilityVisible(state, item)
+                    end
+
+                    local highlight = state.abilityHighlights[item]
+                    if not highlight then
+                        highlight = Instance.new("Highlight")
+                        highlight.Name = "AbilityESP_" .. display
+                        highlight.Adornee = item
+                        highlight.FillColor = ABILITY_HIGHLIGHT_COLOR
+                        highlight.OutlineColor = ABILITY_HIGHLIGHT_COLOR
+                        highlight.FillTransparency = 0.4
+                        highlight.OutlineTransparency = 0
+                        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                        highlight.Parent = parent
+                        state.abilityHighlights[item] = highlight
+                    end
+                end
+            end
+        end
+    end
+
+    for item, highlight in pairs(state.abilityHighlights) do
+        if not wanted[item] or not item.Parent then
+            highlight:Destroy()
+            state.abilityHighlights[item] = nil
+        end
+    end
+end
+
+local function localHasAbility(name)
+    local character = LocalPlayer.Character
+    if not character then
+        return false
+    end
+
+    for index = 1, 4 do
+        if character:GetAttribute("Ability" .. index) == name then
+            return true
+        end
+    end
+
+    local folder = findChild(LocalPlayer, "PlayerGui", "MainGui", "RoundUI", "PlayerUI", "Abilities", "Folder")
+    if folder and folder:FindFirstChild(name) then
+        return true
+    end
+
+    local vanities = character:FindFirstChild("Vanities")
+    if vanities then
+        for _, obj in ipairs(vanities:GetDescendants()) do
+            if obj:GetAttribute("VanityOf") == name then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
+------------------------------------------------------------
+-- DIE OF DEATH STAMINA SETUP
+------------------------------------------------------------
+local MovementModule = nil
+local savedInfiniteStamina = nil
+
+local function getMovementModule()
+    if MovementModule then return MovementModule end
+    local movement = findChild(ReplicatedStorage, "ClientModules", "Gui", "Game", "Movement")
+    if not movement then return nil end
+    local ok, mod = pcall(require, movement)
+    if ok and type(mod) == "table" then
+        MovementModule = mod
+        return mod
+    end
+    return nil
+end
+
+local function getInfiniteStaminaSetting()
+    return findChild(ReplicatedStorage, "GameSettings", "Settings", "InfiniteStamina")
+end
+
+local function setInfiniteStamina(on)
+    local setting = getInfiniteStaminaSetting()
+    if not setting then return end
+    if on then
+        if savedInfiniteStamina == nil then
+            savedInfiniteStamina = setting.Value
+        end
+        setting.Value = true
+    else
+        setting.Value = savedInfiniteStamina or false
+        savedInfiniteStamina = nil
+    end
+end
+
+local function keepStaminaFull()
+    local character = LocalPlayer.Character
+    if not character then return end
+    local maxStamina = tonumber(character:GetAttribute("MaxStamina")) or 100
+    local mod = getMovementModule()
+    if not mod then return end
+    if tonumber(mod.MaxStamina) and tonumber(mod.MaxStamina) > 0 then
+        maxStamina = tonumber(mod.MaxStamina)
+    end
+    if maxStamina <= 0 then maxStamina = 100 end
+    mod.Stamina = maxStamina
+    if character:GetAttribute("Stamina") ~= maxStamina then
+        character:SetAttribute("Stamina", maxStamina)
+    end
+end
+
+------------------------------------------------------------
+-- CREATE WINDOW
+------------------------------------------------------------
+local Window = Library:CreateWindow({
+    Title         = "Chillhub",
+    Footer        = "Simple Edition",
+    ToggleKeybind = Enum.KeyCode.P,
+    Center        = true,
+    AutoShow      = true,
+})
+
+------------------------------------------------------------
+-- TABS
+------------------------------------------------------------
+local HomeTab     = Window:AddTab("Home",            "home")
+local VisualsTab  = Window:AddTab("Visuals",         "eye")
+local FunTab      = Window:AddTab("Fun",             "party-popper")
+local QoLTab      = Window:AddTab("Quality of Life", "sparkles")
+local GameTab     = Window:AddTab("Game",            "gamepad-2")
+local AntiTab     = Window:AddTab("Anti",            "shield")
+local SettingsTab = Window:AddTab("Settings",        "settings")
+
+------------------------------------------------------------
+-- HOME TAB
+------------------------------------------------------------
+do
+    local InfoBox = HomeTab:AddLeftGroupbox("Chillhub")
+    InfoBox:AddLabel("Welcome to Chillhub!")
+    InfoBox:AddLabel("Toggle menu: P key")
+
+    InfoBox:AddButton({
+        Text = "Join Discord",
+        Func = function()
+            copy("discord.gg/yourlink")
+            Library:Notify("Discord link copied!", 3)
+        end
+    })
+
+    InfoBox:AddButton({
+        Text = "Copy Game Link",
+        Func = function()
+            local url = "https://www.roblox.com/games/" .. game.PlaceId
+            if copy(url) then
+                Library:Notify("Game link copied!", 3)
+            else
+                Library:Notify("Clipboard not supported by your executor", 4)
+            end
+        end
+    })
+
+    local RejoinBox = HomeTab:AddRightGroupbox("Rejoin")
+    RejoinBox:AddButton({
+        Text = "Rejoin Now",
+        Func = function()
+            pcall(function()
+                TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+            end)
+        end
+    })
+
+    RejoinBox:AddButton({
+        Text = "Server Hop",
+        Func = function()
+            Library:Notify("Looking for a server...", 3)
+            task.spawn(function()
+                local ok, result = pcall(function()
+                    return HttpService:JSONDecode(
+                        game:HttpGet(("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100"):format(game.PlaceId))
+                    )
+                end)
+                if not ok or not result or not result.data then
+                    Library:Notify("Couldn't fetch servers", 4)
+                    return
+                end
+                for _, server in result.data do
+                    if server.id ~= game.JobId and server.playing < server.maxPlayers then
+                        TeleportService:TeleportToPlaceInstance(game.PlaceId, server.id, LocalPlayer)
+                        return
+                    end
+                end
+                Library:Notify("No other servers found", 4)
+            end)
+        end
+    })
+
+    local KeybindBox = HomeTab:AddRightGroupbox("Keybinds")
+    KeybindBox:AddLabel("Menu toggle: P")
+    KeybindBox:AddLabel("Infinite stamina: Game tab")
+    KeybindBox:AddLabel("Health and counters: Visuals tab")
+end
+
+------------------------------------------------------------
+-- VISUALS TAB
+------------------------------------------------------------
+do
+    -- HUD
+    local HudBox = VisualsTab:AddLeftGroupbox("HUD")
+
+    hudGui = Instance.new("ScreenGui")
+    hudGui.Name = "ChillHUD"
+    hudGui.ResetOnSpawn = false
+    hudGui.IgnoreGuiInset = true
+    hudGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+    local fpsLabel = Instance.new("TextLabel")
+    fpsLabel.Size = UDim2.fromOffset(110, 26)
+    fpsLabel.Position = UDim2.fromOffset(10, 10)
+    fpsLabel.BackgroundColor3 = Color3.new(0, 0, 0)
+    fpsLabel.BackgroundTransparency = 0.4
+    fpsLabel.TextColor3 = Color3.new(1, 1, 1)
+    fpsLabel.Font = Enum.Font.GothamBold
+    fpsLabel.TextSize = 15
+    fpsLabel.Text = "FPS: --"
+    fpsLabel.Visible = false
+    fpsLabel.Parent = hudGui
+    Instance.new("UICorner", fpsLabel).CornerRadius = UDim.new(0, 6)
+
+    local pingLabel = Instance.new("TextLabel")
+    pingLabel.Size = UDim2.fromOffset(140, 26)
+    pingLabel.Position = UDim2.fromOffset(10, 42)
+    pingLabel.BackgroundColor3 = Color3.new(0, 0, 0)
+    pingLabel.BackgroundTransparency = 0.4
+    pingLabel.TextColor3 = Color3.new(1, 1, 1)
+    pingLabel.Font = Enum.Font.GothamBold
+    pingLabel.TextSize = 15
+    pingLabel.Text = "Ping: --"
+    pingLabel.Visible = false
+    pingLabel.Parent = hudGui
+    Instance.new("UICorner", pingLabel).CornerRadius = UDim.new(0, 6)
+
+    local healthLabel = Instance.new("TextLabel")
+    healthLabel.Size = UDim2.fromOffset(150, 26)
+    healthLabel.Position = UDim2.fromOffset(10, 74)
+    healthLabel.BackgroundColor3 = Color3.new(0, 0, 0)
+    healthLabel.BackgroundTransparency = 0.4
+    healthLabel.TextColor3 = Color3.fromRGB(120, 255, 120)
+    healthLabel.Font = Enum.Font.GothamBold
+    healthLabel.TextSize = 15
+    healthLabel.Text = "HP: --/--"
+    healthLabel.Visible = true
+    healthLabel.Parent = hudGui
+    Instance.new("UICorner", healthLabel).CornerRadius = UDim.new(0, 6)
+
+    local staminaLabel = Instance.new("TextLabel")
+    staminaLabel.Size = UDim2.fromOffset(160, 26)
+    staminaLabel.Position = UDim2.fromOffset(10, 106)
+    staminaLabel.BackgroundColor3 = Color3.new(0, 0, 0)
+    staminaLabel.BackgroundTransparency = 0.4
+    staminaLabel.TextColor3 = Color3.fromRGB(120, 210, 255)
+    staminaLabel.Font = Enum.Font.GothamBold
+    staminaLabel.TextSize = 15
+    staminaLabel.Text = "STA: --/--"
+    staminaLabel.Visible = true
+    staminaLabel.Parent = hudGui
+    Instance.new("UICorner", staminaLabel).CornerRadius = UDim.new(0, 6)
+
+    HudBox:AddToggle("Health_Display", {
+        Text = "Health Counter",
+        Default = true,
+        Callback = function(v) healthLabel.Visible = v end
+    })
+
+    HudBox:AddToggle("Stamina_Display", {
+        Text = "Stamina Counter",
+        Default = true,
+        Callback = function(v) staminaLabel.Visible = v end
+    })
+
+    HudBox:AddToggle("Force_HealthBar", {
+        Text = "Force Health Bar",
+        Default = true,
+    })
+
+    HudBox:AddToggle("FPS_Display", {
+        Text = "FPS Counter",
+        Default = false,
+        Callback = function(v) fpsLabel.Visible = v end
+    })
+
+    HudBox:AddToggle("Ping_Display", {
+        Text = "Ping Counter",
+        Default = false,
+        Callback = function(v) pingLabel.Visible = v end
+    })
+
+    local hudTimer = 0
+    connect(RunService.Heartbeat, function(dt)
+        hudTimer += dt
+        if hudTimer < 0.2 then return end
+        hudTimer = 0
+
+        local hum = getHumanoid()
+        if hum then
+            local hp = math.floor(hum.Health + 0.5)
+            local maxHp = math.floor(hum.MaxHealth + 0.5)
+            local ratio = maxHp > 0 and (hp / maxHp) or 0
+            healthLabel.Text = "HP: " .. hp .. "/" .. maxHp
+            if ratio > 0.5 then
+                healthLabel.TextColor3 = Color3.fromRGB(120, 255, 120)
+            elseif ratio > 0.25 then
+                healthLabel.TextColor3 = Color3.fromRGB(255, 210, 80)
+            else
+                healthLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
+            end
+        end
+
+        local character = LocalPlayer.Character
+        local mod = getMovementModule()
+        local stamina = mod and mod.Stamina or (character and character:GetAttribute("Stamina"))
+        local maxStamina = mod and mod.MaxStamina or (character and character:GetAttribute("MaxStamina")) or 100
+        if stamina then
+            staminaLabel.Text = "STA: " .. math.floor(stamina + 0.5) .. "/" .. math.floor(maxStamina + 0.5)
+        end
+    end)
+
+    connect(RunService.RenderStepped, function()
+        if not Toggles.Force_HealthBar.Value then return end
+        local bar = findChild(LocalPlayer, "PlayerGui", "MainGui", "RoundUI", "PlayerUI", "HealthBar")
+        if not bar then return end
+        if not bar.Visible then
+            bar.Visible = true
+        end
+        local hum = getHumanoid()
+        if hum and bar:FindFirstChild("Label") then
+            local text = math.floor(hum.Health + 0.5) .. "/" .. math.floor(hum.MaxHealth + 0.5)
+            if bar.Label.Text ~= text then
+                bar.Label.Text = text
+            end
+        end
+    end)
+
+    local frames, elapsed = 0, 0
+    connect(RunService.RenderStepped, function(dt)
+        if not fpsLabel.Visible then return end
+        frames += 1
+        elapsed += dt
+        if elapsed >= 0.5 then
+            fpsLabel.Text = "FPS: " .. math.round(frames / elapsed)
+            frames = 0
+            elapsed = 0
+        end
+    end)
+
+    local pingTimer = 0
+    connect(RunService.Heartbeat, function(dt)
+        if not pingLabel.Visible then return end
+        pingTimer += dt
+        if pingTimer < 0.5 then return end
+        pingTimer = 0
+        local ok, ping = pcall(function()
+            return game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue()
+        end)
+        if ok then
+            pingLabel.Text = "Ping: " .. math.max(0, math.floor(ping)) .. " ms"
+        end
+    end)
+
+    -- Performance
+    local PerfBox = VisualsTab:AddLeftGroupbox("Performance")
+
+    local origShadows = Lighting.GlobalShadows
+
+    PerfBox:AddToggle("LowQuality_Enabled", {
+        Text = "Low Quality Mode",
+        Default = false,
+        Callback = function(on)
+            Lighting.GlobalShadows = not on and origShadows or false
+            for _, e in Lighting:GetChildren() do
+                if e:IsA("PostEffect") then
+                    e.Enabled = not on
+                end
+            end
+        end
+    })
+
+    local savedLighting = nil
+    PerfBox:AddToggle("Fullbright_Enabled", {
+        Text = "Fullbright",
+        Default = false,
+        Callback = function(on)
+            if on then
+                savedLighting = {
+                    Brightness     = Lighting.Brightness,
+                    ClockTime      = Lighting.ClockTime,
+                    Ambient        = Lighting.Ambient,
+                    OutdoorAmbient = Lighting.OutdoorAmbient,
+                    GlobalShadows  = Lighting.GlobalShadows,
+                }
+                Lighting.Brightness     = 2
+                Lighting.ClockTime      = 14
+                Lighting.Ambient        = Color3.new(1, 1, 1)
+                Lighting.OutdoorAmbient = Color3.new(1, 1, 1)
+                Lighting.GlobalShadows  = false
+            elseif savedLighting then
+                for k, v in savedLighting do Lighting[k] = v end
+                savedLighting = nil
+            end
+        end
+    })
+
+    -- ESP
+    local EspBox = VisualsTab:AddRightGroupbox("ESP")
+
+    espGui = Instance.new("ScreenGui")
+    espGui.Name = "ChillESP"
+    espGui.ResetOnSpawn = false
+    espGui.IgnoreGuiInset = true
+    espGui.DisplayOrder = 5
+    espGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+    local espFolder = Instance.new("Folder")
+    espFolder.Name = "Highlights"
+    espFolder.Parent = espGui
+
+    EspBox:AddToggle("ESP_Survivors", {
+        Text = "Survivor ESP",
+        Default = true,
+    })
+
+    EspBox:AddToggle("ESP_Killers", {
+        Text = "Killer ESP",
+        Default = true,
+    })
+
+    EspBox:AddToggle("ESP_Abilities", {
+        Text = "Ability ESP",
+        Default = true,
+    })
+
+    EspBox:AddToggle("ESP_AbilityModels", {
+        Text = "Highlight Ability Models",
+        Default = true,
+    })
+
+    EspBox:AddToggle("ESP_Cooldowns", {
+        Text = "Show Ability Cooldowns",
+        Default = true,
+    })
+
+    EspBox:AddToggle("ESP_Health", {
+        Text = "Show Health",
+        Default = true,
+    })
+
+    EspBox:AddToggle("ESP_Distance", {
+        Text = "Show Distance",
+        Default = true,
+    })
+
+    EspBox:AddSlider("ESP_MaxDistance", {
+        Text = "Max Distance (0 = unlimited)",
+        Default = 0,
+        Min = 0,
+        Max = 20000,
+        Rounding = 0
+    })
+
+    EspBox:AddLabel("Survivors green, killers red")
+    EspBox:AddLabel("Ability models glow orange")
+
+    local AbilityFilterBox = VisualsTab:AddLeftGroupbox("Ability ESP Filters")
+    for _, display in ipairs(ABILITY_PRIORITY) do
+        local flag = "ESPAbility_" .. display:gsub("%s+", "")
+        ABILITY_ESP_FLAGS[display] = flag
+        AbilityFilterBox:AddToggle(flag, {
+            Text = display,
+            Default = true,
+        })
+    end
+    AbilityFilterBox:AddLabel("Choose which abilities show in ESP")
+
+    local espStates = {}
+
+    local function destroyEsp(player)
+        local state = espStates[player]
+        if not state then
+            return
+        end
+        if state.highlight then
+            pcall(function() state.highlight:Destroy() end)
+        end
+        if state.billboard then
+            pcall(function() state.billboard:Destroy() end)
+        end
+        if state.abilityHighlights then
+            for _, abilityHighlight in pairs(state.abilityHighlights) do
+                pcall(function() abilityHighlight:Destroy() end)
+            end
+        end
+        if state.forcedVisibility then
+            for item in pairs(state.forcedVisibility) do
+                pcall(function() restoreAbilityVisibility(state, item) end)
+            end
+        end
+        espStates[player] = nil
+    end
+
+    local function createEsp(player)
+        local state = {
+            abilityHighlights = {},
+            forcedVisibility = {},
+            lastCooldowns = {},
+            usedAt = {},
+        }
+
+        local highlight = Instance.new("Highlight")
+        highlight.Name = "ESP_" .. player.Name
+        highlight.FillTransparency = 0.7
+        highlight.OutlineTransparency = 0
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        highlight.Parent = espFolder
+
+        local billboard = Instance.new("BillboardGui")
+        billboard.Name = "ESP_" .. player.Name
+        billboard.Size = UDim2.fromOffset(220, 56)
+        billboard.StudsOffset = Vector3.new(0, 2.8, 0)
+        billboard.AlwaysOnTop = true
+        billboard.LightInfluence = 0
+        billboard.MaxDistance = 2000
+        billboard.ResetOnSpawn = false
+        billboard.Parent = espFolder
+
+        local function makeLabel(y, height, textSize)
+            local label = Instance.new("TextLabel")
+            label.BackgroundTransparency = 1
+            label.Size = UDim2.new(1, 0, 0, height)
+            label.Position = UDim2.fromOffset(0, y)
+            label.Font = Enum.Font.GothamBold
+            label.TextSize = textSize
+            label.TextStrokeTransparency = 0
+            label.TextStrokeColor3 = Color3.new(0, 0, 0)
+            label.Parent = billboard
+            return label
+        end
+
+        state.highlight   = highlight
+        state.billboard   = billboard
+        state.nameLabel   = makeLabel(0, 20, 15)
+        state.infoLabel   = makeLabel(20, 16, 13)
+        state.abilityLabel = makeLabel(36, 18, 13)
+        state.abilityLabel.TextColor3 = Color3.fromRGB(255, 210, 80)
+
+        espStates[player] = state
+        return state
+    end
+
+    local espTimer = 0
+    connect(RunService.Heartbeat, function(dt)
+        espTimer += dt
+        if espTimer < 0.2 then
+            return
+        end
+        espTimer = 0
+
+        local showSurvivors = Toggles.ESP_Survivors.Value
+        local showKillers   = Toggles.ESP_Killers.Value
+        local showAbilities = Toggles.ESP_Abilities.Value
+        local showAbilityModels = Toggles.ESP_AbilityModels.Value
+        local showCooldowns = Toggles.ESP_Cooldowns.Value
+        local showHealth    = Toggles.ESP_Health.Value
+        local showDistance  = Toggles.ESP_Distance.Value
+        local maxDistance   = tonumber(Options.ESP_MaxDistance.Value) or 0
+        local unlimited     = maxDistance <= 0
+        local billboardDistance = unlimited and 20000 or maxDistance
+        local enabledAbilities = getEnabledAbilities()
+
+        local myRoot = getRoot()
+        local myPos = myRoot and myRoot.Position
+
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                local character = player.Character
+                local role = getPlayerRole(player)
+                local show = (role == "Survivor" and showSurvivors) or (role == "Killer" and showKillers)
+
+                local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+                local root = character and character:FindFirstChild("HumanoidRootPart")
+                local distance = (myPos and root) and (root.Position - myPos).Magnitude or 0
+
+                if show and humanoid and root and humanoid.Health > 0 and (unlimited or distance <= maxDistance) then
+                    local state = espStates[player]
+                    if not state or not state.highlight or not state.highlight.Parent then
+                        destroyEsp(player)
+                        state = createEsp(player)
+                    end
+
+                    if state.character ~= character then
+                        if state.forcedVisibility then
+                            for item in pairs(state.forcedVisibility) do
+                                pcall(function() restoreAbilityVisibility(state, item) end)
+                            end
+                        end
+                        state.character = character
+                        state.lastCooldowns = {}
+                        state.usedAt = {}
+                    end
+
+                    state.highlight.Adornee = character
+                    state.billboard.Adornee = root
+                    state.billboard.MaxDistance = billboardDistance
+
+                    local isKiller = role == "Killer"
+                    local color = isKiller and Color3.fromRGB(255, 70, 70) or Color3.fromRGB(90, 255, 140)
+                    state.highlight.FillColor = color
+                    state.highlight.OutlineColor = color
+
+                    state.nameLabel.Text = (isKiller and "[KILLER] " or "[SURVIVOR] ") .. player.DisplayName
+                    state.nameLabel.TextColor3 = color
+
+                    local info = {}
+                    if showHealth then
+                        info[#info + 1] = string.format("HP: %d/%d",
+                            math.floor(humanoid.Health + 0.5),
+                            math.floor(humanoid.MaxHealth + 0.5))
+                    end
+                    if showDistance then
+                        info[#info + 1] = string.format("%dm", math.floor(distance))
+                    end
+                    if isKiller then
+                        local killerName = character:GetAttribute("KillerName")
+                        if killerName then
+                            info[#info + 1] = tostring(killerName)
+                        else
+                            local stats = player:FindFirstChild("Stats")
+                            local equipped = stats and stats:FindFirstChild("EquippedKiller")
+                            if equipped and equipped.Value ~= "" then
+                                info[#info + 1] = tostring(equipped.Value)
+                            end
+                        end
+                    end
+                    state.infoLabel.Text = table.concat(info, "  |  ")
+                    state.infoLabel.Visible = #info > 0
+
+                    local abilityText = ""
+                    if showAbilities then
+                        local found = getEquippedAbilities(character)
+                        for display in pairs(found) do
+                            if not enabledAbilities[display] then
+                                found[display] = nil
+                            end
+                        end
+                        abilityText = getAbilityText(found, character, showCooldowns)
+                    end
+                    state.abilityLabel.Text = abilityText
+                    state.abilityLabel.Visible = abilityText ~= ""
+
+                    if showAbilities and showAbilityModels then
+                        updateAbilityHighlights(state, character, enabledAbilities, espFolder)
+                    else
+                        updateAbilityHighlights(state, character, {}, espFolder)
+                    end
+                else
+                    destroyEsp(player)
+                end
+            end
+        end
+
+        for player in pairs(espStates) do
+            if not player.Parent or not player.Character then
+                destroyEsp(player)
+            end
+        end
+    end)
+
+    connect(Players.PlayerRemoving, destroyEsp)
+
+end
+
+------------------------------------------------------------
+-- FUN TAB
+------------------------------------------------------------
+do
+    local CharBox = FunTab:AddLeftGroupbox("Character")
+
+    CharBox:AddToggle("Fun_Spin", { Text = "Spin", Default = false })
+    CharBox:AddInput("Fun_SpinSpeed", {
+        Text = "Spin Speed",
+        Default = "10",
+        Numeric = true,
+        Finished = false,
+        Placeholder = "1-40"
+    })
+
+    connect(RunService.Heartbeat, function(dt)
+        if not Toggles.Fun_Spin.Value then return end
+        local root = getRoot()
+        if root then
+            root.CFrame = root.CFrame * CFrame.Angles(0, math.rad((tonumber(Options.Fun_SpinSpeed.Value) or 10) * 36) * dt, 0)
+        end
+    end)
+
+    local rainbowParts = {}
+    local rainbowOrig  = {}
+
+    CharBox:AddToggle("Fun_Rainbow", {
+        Text = "Rainbow Character",
+        Default = false,
+        Callback = function(v)
+            if not v then
+                for part, col in rainbowOrig do
+                    if part.Parent then part.Color = col end
+                end
+                rainbowOrig  = {}
+                rainbowParts = {}
+            end
+        end
+    })
+
+    local rainbowT = 0
+    connect(RunService.Heartbeat, function(dt)
+        if not Toggles.Fun_Rainbow.Value then return end
+        rainbowT += dt
+        if rainbowT < 0.05 then return end
+        rainbowT = 0
+        local char = LocalPlayer.Character
+        if not char then return end
+        if #rainbowParts == 0 then
+            for _, p in char:GetDescendants() do
+                if p:IsA("BasePart") and p.Name ~= "HumanoidRootPart" then
+                    rainbowParts[#rainbowParts + 1] = p
+                end
+            end
+        end
+        local col = Color3.fromHSV((os.clock() * 0.3) % 1, 0.8, 1)
+        for _, part in rainbowParts do
+            if part.Parent then
+                if rainbowOrig[part] == nil then rainbowOrig[part] = part.Color end
+                part.Color = col
+            end
+        end
+    end)
+
+    CharBox:AddButton({
+        Text = "Sit",
+        Func = function()
+            local h = getHumanoid()
+            if h then h.Sit = true end
+        end
+    })
+
+    local AnimBox = FunTab:AddRightGroupbox("Killer Animations")
+
+    local animKeys = { "Idle", "Walk", "Sprint", "Jump", "Fall", "Land", "Sit" }
+    local hurtKeys = { "HurtIdle", "HurtWalk", "HurtSprint" }
+    local killerOrder = { "Pursuer", "Badware", "Killdroid", "Harken", "Artful", "Dookie Daniel", "Ghost" }
+    local selectedKiller = "Default"
+
+    local defaultAnims = {}
+    do
+        local clientModules = ReplicatedStorage:FindFirstChild("ClientModules")
+        local characters = clientModules and clientModules:FindFirstChild("Characters")
+        local civilian = characters and characters:FindFirstChild("Civilian")
+        local model = civilian and (civilian:FindFirstChild("Civilian") or civilian:FindFirstChildWhichIsA("Model"))
+        local animations = model and model:FindFirstChild("Animations")
+        if animations then
+            for _, obj in ipairs(animations:GetDescendants()) do
+                if obj:IsA("Animation") then
+                    defaultAnims[obj.Name] = obj.AnimationId
+                end
+            end
+        end
+    end
+
+    local function getKillerAnimations(name)
+        local clientModules = ReplicatedStorage:FindFirstChild("ClientModules")
+        local characters = clientModules and clientModules:FindFirstChild("Characters")
+        local character = characters and characters:FindFirstChild(name)
+        if not character then return nil end
+        local model = character:FindFirstChild("Default") or character:FindFirstChildWhichIsA("Model") or character
+        local animations = model:FindFirstChild("Animations")
+        if not animations then return nil end
+        local set = {}
+        for _, key in ipairs(animKeys) do
+            local anim = animations:FindFirstChild(key)
+            if anim and anim:IsA("Animation") then
+                set[key] = anim.AnimationId
+            end
+        end
+        return set
+    end
+
+    local function isLocomotion(name)
+        return table.find(animKeys, name) ~= nil or table.find(hurtKeys, name) ~= nil
+    end
+
+    local function stopLocomotion(humanoid)
+        for _, track in ipairs(humanoid:GetPlayingAnimationTracks()) do
+            if isLocomotion(track.Name) then
+                track:Stop(0.1)
+            end
+        end
+    end
+
+    local function playLocomotion(humanoid, character, name)
+        local animations = character:FindFirstChild("Animations")
+        local anim = animations and animations:FindFirstChild(name)
+        if not anim or not anim:IsA("Animation") then return end
+        for _, existing in ipairs(humanoid:GetPlayingAnimationTracks()) do
+            if existing.Name == name then
+                if existing.Animation and existing.Animation.AnimationId == anim.AnimationId then
+                    if not existing.IsPlaying then existing:Play(0.15) end
+                    return
+                end
+                existing:Stop(0.1)
+            end
+        end
+        local track = humanoid:LoadAnimation(anim)
+        track.Name = name
+        if name == "Idle" then
+            track.Priority = Enum.AnimationPriority.Core
+        elseif name == "Walk" then
+            track.Priority = Enum.AnimationPriority.Idle
+        else
+            track.Priority = Enum.AnimationPriority.Movement
+        end
+        track:Play(0.15)
+    end
+
+    local function applyKillerAnimations(name)
+        selectedKiller = name or "Default"
+        local character = LocalPlayer.Character
+        local humanoid = getHumanoid()
+        local animations = character and character:FindFirstChild("Animations")
+        if not (character and humanoid and animations) then return end
+
+        stopLocomotion(humanoid)
+
+        for _, obj in ipairs(animations:GetDescendants()) do
+            if obj:IsA("Animation") and defaultAnims[obj.Name] then
+                obj.AnimationId = defaultAnims[obj.Name]
+            end
+        end
+
+        if selectedKiller ~= "Default" then
+            local set = getKillerAnimations(selectedKiller)
+            if set then
+                for key, id in pairs(set) do
+                    local obj = animations:FindFirstChild(key)
+                    if obj and obj:IsA("Animation") then
+                        obj.AnimationId = id
+                    end
+                end
+                for hurtName, baseName in pairs({ HurtIdle = "Idle", HurtWalk = "Walk", HurtSprint = "Sprint" }) do
+                    local obj = animations:FindFirstChild(hurtName, true)
+                    if obj and obj:IsA("Animation") and set[baseName] then
+                        obj.AnimationId = set[baseName]
+                    end
+                end
+            end
+        end
+
+        local desired = (selectedKiller ~= "Default" and humanoid.MoveDirection.Magnitude > 1) and "Walk" or "Idle"
+        playLocomotion(humanoid, character, desired)
+    end
+    getgenv().ChillhubSetKillerAnim = applyKillerAnimations
+
+    local killerValues = { "Default" }
+    for _, name in ipairs(killerOrder) do
+        local set = getKillerAnimations(name)
+        if set and next(set) then
+            killerValues[#killerValues + 1] = name
+        end
+    end
+
+    AnimBox:AddDropdown("Fun_KillerAnim", {
+        Text = "Killer Animation Set",
+        Values = killerValues,
+        Default = "Default",
+        Callback = function(name)
+            applyKillerAnimations(name)
+            if name == "Default" then
+                Library:Notify("Default animations restored", 3)
+            else
+                Library:Notify("Using " .. name .. " animations", 3)
+            end
+        end
+    })
+    AnimBox:AddLabel("Idle, walk, sprint, jump and fall")
+    AnimBox:AddLabel("Local-only visual change")
+
+    connect(LocalPlayer.CharacterAdded, function()
+        if selectedKiller ~= "Default" then
+            task.delay(1, function()
+                applyKillerAnimations(selectedKiller)
+            end)
+        end
+    end)
+end
+
+------------------------------------------------------------
+-- QUALITY OF LIFE TAB
+------------------------------------------------------------
+do
+    local UtilBox = QoLTab:AddLeftGroupbox("Utility")
+
+    UtilBox:AddToggle("QoL_AntiAFK", { Text = "Anti AFK", Default = true })
+    connect(LocalPlayer.Idled, function()
+        if Toggles.QoL_AntiAFK.Value then
+            local VU = game:GetService("VirtualUser")
+            VU:CaptureController()
+            VU:ClickButton2(Vector2.new())
+        end
+    end)
+
+    UtilBox:AddToggle("QoL_JoinLeave", { Text = "Join/Leave Notifications", Default = false })
+    connect(Players.PlayerAdded,    function(p) if Toggles.QoL_JoinLeave.Value then Library:Notify(p.DisplayName .. " joined", 3) end end)
+    connect(Players.PlayerRemoving, function(p) if Toggles.QoL_JoinLeave.Value then Library:Notify(p.DisplayName .. " left",   3) end end)
+
+    UtilBox:AddToggle("QoL_HideChat", {
+        Text = "Hide Chat",
+        Default = false,
+        Callback = function(on)
+            pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, not on) end)
+        end
+    })
+
+    UtilBox:AddToggle("QoL_HidePlayerList", {
+        Text = "Hide Player List",
+        Default = false,
+        Callback = function(on)
+            pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, not on) end)
+        end
+    })
+
+    UtilBox:AddButton({
+        Text = "Reset Character",
+        Func = function()
+            local h = getHumanoid()
+            if h then h.Health = 0 end
+        end
+    })
+
+    UtilBox:AddButton({
+        Text = "Copy Job ID",
+        Func = function()
+            if copy(game.JobId) then Library:Notify("Job ID copied!", 3)
+            else Library:Notify("Clipboard not supported", 4) end
+        end
+    })
+
+    local ThemeBox = QoLTab:AddRightGroupbox("Theme")
+    ThemeBox:AddDropdown("QoL_Theme", {
+        Values = { "Default", "BBot", "Fatality", "Jester", "Mint", "Tokyo Night", "Ubuntu", "Quartz" },
+        Default = 6,
+        Text = "UI Theme",
+        Callback = function(name)
+            pcall(function() ThemeManager:ApplyTheme(name) end)
+        end
+    })
+end
+
+------------------------------------------------------------
+-- GAME TAB (Die of Death infinite stamina)
+------------------------------------------------------------
+do
+    local StaminaBox = GameTab:AddLeftGroupbox("Die of Death")
+
+    StaminaBox:AddToggle("Game_InfiniteStamina", {
+        Text = "Infinite Stamina",
+        Default = true,
+        Callback = function(on)
+            setInfiniteStamina(on)
+            if on then
+                keepStaminaFull()
+            end
+        end
+    })
+
+    StaminaBox:AddToggle("Game_ShowStaminaBar", {
+        Text = "Keep Stamina Bar Visible",
+        Default = true,
+    })
+
+    StaminaBox:AddToggle("Game_AntiExhaust", {
+        Text = "Clear Exhausted",
+        Default = true,
+        Callback = function(on)
+            local character = LocalPlayer.Character
+            if on and character then
+                character:SetAttribute("Exhausted", 0)
+            end
+        end
+    })
+
+    local SpeedBox = GameTab:AddLeftGroupbox("Character Speed")
+    SpeedBox:AddToggle("Game_Speed", {
+        Text = "Enable Speed Changer",
+        Default = false,
+        Callback = function(on)
+            if not on then
+                local hum = getHumanoid()
+                if hum then hum.WalkSpeed = 16 end
+            end
+        end
+    })
+    SpeedBox:AddSlider("Game_SpeedValue", {
+        Text = "Walk Speed",
+        Default = 30,
+        Min = 16,
+        Max = 150,
+        Rounding = 0
+    })
+    SpeedBox:AddLabel("Client-side speed override")
+
+    local SurvivalBox = GameTab:AddLeftGroupbox("Survival")
+    SurvivalBox:AddToggle("Game_Noclip", {
+        Text = "Noclip",
+        Default = false,
+        Callback = function(on)
+            setNoclip(on)
+        end
+    })
+    SurvivalBox:AddToggle("Game_Jump", {
+        Text = "Jump Boost",
+        Default = false,
+        Callback = function(on)
+            setJump(on)
+        end
+    })
+    SurvivalBox:AddSlider("Game_JumpPower", {
+        Text = "Jump Power",
+        Default = 50,
+        Min = 10,
+        Max = 150,
+        Rounding = 0
+    })
+
+    ------------------------------------------------------------
+    -- ANTI EFFECTS
+    -- Die of Death applies every killer debuff as an attribute on your
+    -- character and then renders the effect on the client:
+    --   PieBlindness  -> pie splat, hidden cooldowns, "??? stamina"
+    --   Blindness     -> Lighting.BlindnessBlur
+    --   Dazed         -> DazedModel + tinted ability icons (Flashlight)
+    --   Stunned       -> tinted ability icons + muffle
+    --   WalkSpeedModifier < 0 -> slow (Pie / Flashlight)
+    -- Writing the neutral value locally removes the effect for us while
+    -- the server keeps its own timer. Screen flashes use the game's own
+    -- accessibility switches.
+    ------------------------------------------------------------
+    local AntiBox = AntiTab:AddLeftGroupbox("Anti Effects")
+
+    AntiBox:AddToggle("Game_AntiPie", {
+        Text = "Anti Pie",
+        Default = true,
+    })
+    AntiBox:AddToggle("Game_AntiBlind", {
+        Text = "Anti Blindness",
+        Default = true,
+    })
+    AntiBox:AddToggle("Game_AntiDaze", {
+        Text = "Anti Daze / Flashlight",
+        Default = true,
+    })
+    AntiBox:AddToggle("Game_AntiSlow", {
+        Text = "Anti Slow",
+        Default = true,
+    })
+    AntiBox:AddToggle("Game_AntiHighlight", {
+        Text = "Anti Highlight",
+        Default = true,
+    })
+    AntiBox:AddToggle("Game_AntiFlash", {
+        Text = "Anti Screen Flash / Shake",
+        Default = true,
+    })
+    AntiBox:AddToggle("Game_AntiMuffle", {
+        Text = "Anti Stun Muffle",
+        Default = true,
+    })
+    AntiBox:AddToggle("Game_AntiStunTint", {
+        Text = "Anti Stun Tint",
+        Default = true,
+    })
+
+    local AntiInfoBox = AntiTab:AddRightGroupbox("How It Works")
+    AntiInfoBox:AddLabel("Clears the debuffs the Killer receives")
+    AntiInfoBox:AddLabel("Pie / Blindness / Daze / Slow / Highlights")
+    AntiInfoBox:AddLabel("Also clears stun muffle + ability icon tint")
+    AntiInfoBox:AddLabel("Flashes and camera shake use the game's own accessibility settings")
+
+    local function getRoundUI()
+        return findChild(LocalPlayer, "PlayerGui", "MainGui", "RoundUI")
+    end
+
+    -- Same colour source IconLoop uses, so resetting never leaves a wrong tint.
+    local function resetAbilityTints()
+        local round = getRoundUI()
+        local folder = round and findChild(round, "PlayerUI", "Abilities", "Folder")
+        if not folder then
+            return
+        end
+
+        for _, element in ipairs(folder:GetChildren()) do
+            if element:IsA("ImageButton") then
+                local icon = element:FindFirstChild("Icon")
+                if icon and icon:IsA("ImageLabel") then
+                    local original = element:GetAttribute("OriginalColor")
+                    icon.ImageColor3 = typeof(original) == "Color3" and original or Color3.new(1, 1, 1)
+                end
+            end
+        end
+    end
+
+    local function clearBlindnessBlur()
+        for _, child in ipairs(Lighting:GetChildren()) do
+            if child.Name == "BlindnessBlur" then
+                child:Destroy()
+            end
+        end
+    end
+
+    local function clearDetectionHighlights()
+        local character = LocalPlayer.Character
+        if not character then
+            return
+        end
+
+        for _, child in ipairs(character:GetChildren()) do
+            if child:IsA("Highlight")
+                and (child.Name == "DetectionHighlight" or child.Name == "OverridableDetectionHighlight") then
+                child:Destroy()
+            end
+        end
+    end
+
+    -- Music.Muffle is cloned into the killer's Animations.ChaseTheme Sound.
+    local function clearMuffle()
+        local teams = findChild(workspace, "GameAssets", "Teams")
+        if not teams then
+            return
+        end
+
+        for _, character in ipairs(teams:GetChildren()) do
+            local animations = character:FindFirstChild("Animations")
+            local theme = animations and animations:FindFirstChild("ChaseTheme")
+            local muffle = theme and theme:FindFirstChild("Muffle")
+            if muffle and muffle:IsA("Sound") then
+                muffle.Volume = 0
+            end
+        end
+    end
+
+    -- The Dazed remote tints the ability icons for 6 seconds even after the
+    -- attribute is cleared, so remember when it fired.
+    local dazeFlashUntil = 0
+    local remoteEvents = findChild(ReplicatedStorage, "Events", "RemoteEvents")
+    local dazedRemote = remoteEvents and remoteEvents:FindFirstChild("Dazed")
+    if dazedRemote then
+        connect(dazedRemote.OnClientEvent, function()
+            dazeFlashUntil = os.clock() + 6.5
+        end)
+    end
+
+    -- The game already ships accessibility switches that disable the heavy hit
+    -- colour correction, the transition flash and camera shake.
+    local savedEpilepsy = nil
+    local savedCameraShake = nil
+
+    local function applyFlashSettings(on)
+        local settings = findChild(LocalPlayer, "Stats", "Settings")
+        if not settings then
+            return false
+        end
+
+        local epilepsy = settings:FindFirstChild("Epilepsy")
+        local cameraShake = settings:FindFirstChild("CameraShake")
+
+        if on then
+            if epilepsy and epilepsy:IsA("BoolValue") then
+                if savedEpilepsy == nil then
+                    savedEpilepsy = epilepsy.Value
+                end
+                epilepsy.Value = true
+            end
+            if cameraShake and cameraShake:IsA("BoolValue") then
+                if savedCameraShake == nil then
+                    savedCameraShake = cameraShake.Value
+                end
+                cameraShake.Value = false
+            end
+        else
+            if epilepsy and epilepsy:IsA("BoolValue") and savedEpilepsy ~= nil then
+                epilepsy.Value = savedEpilepsy
+            end
+            if cameraShake and cameraShake:IsA("BoolValue") and savedCameraShake ~= nil then
+                cameraShake.Value = savedCameraShake
+            end
+            savedEpilepsy = nil
+            savedCameraShake = nil
+        end
+
+        return true
+    end
+
+    connect(Lighting.ChildAdded, function(child)
+        if child.Name == "BlindnessBlur"
+            and Toggles.Game_AntiBlind and Toggles.Game_AntiBlind.Value then
+            task.defer(function()
+                if child.Parent then
+                    child:Destroy()
+                end
+            end)
+        end
+    end)
+
+    connect(RunService.RenderStepped, function()
+        if unloaded then
+            return
+        end
+
+        local character = LocalPlayer.Character
+        if not character then
+            return
+        end
+
+        -- Pie: overlay, ability tint, hidden cooldowns and the "???" stamina
+        -- counter are all rebuilt from PieBlindness every frame.
+        if Toggles.Game_AntiPie.Value and character:GetAttribute("PieBlindness") then
+            character:SetAttribute("PieBlindness", false)
+        end
+
+        if Toggles.Game_AntiBlind.Value then
+            local blindness = character:GetAttribute("Blindness")
+            if type(blindness) == "number" and blindness > 0 then
+                character:SetAttribute("Blindness", 0)
+            end
+            clearBlindnessBlur()
+        end
+
+        local wasDazed = false
+        if Toggles.Game_AntiDaze.Value then
+            wasDazed = character:GetAttribute("Dazed") == true
+            if wasDazed then
+                character:SetAttribute("Dazed", false)
+            end
+
+            local model = character:FindFirstChild("DazedModel")
+            if model then
+                model:Destroy()
+            end
+        end
+
+        if Toggles.Game_AntiSlow.Value then
+            local modifier = character:GetAttribute("WalkSpeedModifier")
+            if type(modifier) == "number" and modifier < 0 then
+                character:SetAttribute("WalkSpeedModifier", 0)
+            end
+        end
+
+        if Toggles.Game_AntiHighlight.Value then
+            clearDetectionHighlights()
+        end
+
+        local stunned = character:GetAttribute("Stunned") == true
+        if Toggles.Game_AntiMuffle.Value and stunned then
+            clearMuffle()
+        end
+
+        if Toggles.Game_AntiDaze.Value and (wasDazed or os.clock() < dazeFlashUntil) then
+            resetAbilityTints()
+        end
+
+        if Toggles.Game_AntiStunTint.Value and stunned then
+            resetAbilityTints()
+        end
+    end)
+
+    task.spawn(function()
+        local applied = false
+
+        while not unloaded and getgenv().ChillhubSimple_Gen == MY_GEN do
+            local settings = findChild(LocalPlayer, "Stats", "Settings")
+
+            if settings then
+                if Toggles.Game_AntiFlash.Value then
+                    if applyFlashSettings(true) then
+                        applied = true
+                    end
+                elseif applied then
+                    applyFlashSettings(false)
+                    applied = false
+                end
+            end
+
+            task.wait(1)
+        end
+
+        if applied then
+            applyFlashSettings(false)
+        end
+    end)
+
+    local StatusBox = GameTab:AddRightGroupbox("Info")
+    StatusBox:AddLabel("Keeps your stamina at max")
+    StatusBox:AddLabel("Sprint as long as you want")
+    StatusBox:AddLabel("Works on survivor and killer")
+    StatusBox:AddLabel("Rejoin-safe, auto re-applies")
+
+    local staminaTimer = 0
+    connect(RunService.Heartbeat, function(dt)
+        if not Toggles.Game_InfiniteStamina.Value then return end
+
+        keepStaminaFull()
+
+        staminaTimer += dt
+        if staminaTimer >= 0.2 and Toggles.Game_AntiExhaust.Value then
+            staminaTimer = 0
+            local character = LocalPlayer.Character
+            if character and (character:GetAttribute("Exhausted") or 0) > 0 then
+                character:SetAttribute("Exhausted", 0)
+            end
+        end
+    end)
+
+    connect(RunService.RenderStepped, function()
+        if not Toggles.Game_InfiniteStamina.Value then return end
+        if not Toggles.Game_ShowStaminaBar.Value then return end
+        local bar = findChild(LocalPlayer, "PlayerGui", "MainGui", "RoundUI", "PlayerUI", "StaminaBar")
+        if bar and not bar.Visible then
+            bar.Visible = true
+        end
+    end)
+
+    connect(RunService.RenderStepped, function()
+        if not Toggles.Game_Speed.Value then return end
+        local hum = getHumanoid()
+        if not hum then return end
+        local speed = tonumber(Options.Game_SpeedValue.Value) or 30
+        if hum.WalkSpeed ~= speed then
+            hum.WalkSpeed = speed
+        end
+    end)
+
+    connect(RunService.RenderStepped, function()
+        if Toggles.Game_Noclip.Value then
+            setNoclip(true)
+        end
+    end)
+
+    connect(RunService.RenderStepped, function()
+        if not Toggles.Game_Jump.Value then return end
+        local hum = getHumanoid()
+        if not hum then return end
+        local power = tonumber(Options.Game_JumpPower.Value) or 50
+        hum.UseJumpPower = true
+        if hum.JumpPower ~= power then
+            hum.JumpPower = power
+        end
+        if not hum:GetStateEnabled(Enum.HumanoidStateType.Jumping) then
+            hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+        end
+    end)
+
+    connect(LocalPlayer.CharacterAdded, function()
+        noclipSaved = {}
+        if Toggles.Game_Noclip.Value then
+            task.delay(0.5, function() setNoclip(true) end)
+        end
+        if Toggles.Game_Jump.Value then
+            task.delay(0.5, function() setJump(true) end)
+        end
+    end)
+
+    setInfiniteStamina(true)
+    task.spawn(function()
+        while not unloaded and getgenv().ChillhubSimple_Gen == MY_GEN do
+            if Toggles.Game_InfiniteStamina.Value then
+                setInfiniteStamina(true)
+                keepStaminaFull()
+            end
+            task.wait(1)
+        end
+    end)
+end
+
+------------------------------------------------------------
+-- SETTINGS TAB
+------------------------------------------------------------
+do
+    local MenuBox = SettingsTab:AddRightGroupbox("Menu")
+
+    MenuBox:AddButton({
+        Text = "Turn Off All Features",
+        Func = function()
+            local toOff = {
+                "Fun_Spin", "Fun_Rainbow",
+                "Fullbright_Enabled", "LowQuality_Enabled",
+                "FPS_Display", "Ping_Display", "Health_Display", "Stamina_Display", "Force_HealthBar",
+                "QoL_AntiAFK", "QoL_HideChat", "QoL_HidePlayerList", "QoL_JoinLeave",
+                "Game_InfiniteStamina", "Game_ShowStaminaBar", "Game_AntiExhaust", "Game_Speed",
+                "Game_Noclip", "Game_Jump",
+                "Game_AntiPie", "Game_AntiBlind", "Game_AntiDaze", "Game_AntiSlow",
+                "Game_AntiHighlight", "Game_AntiFlash", "Game_AntiMuffle", "Game_AntiStunTint",
+                "ESP_Survivors", "ESP_Killers", "ESP_Abilities", "ESP_Cooldowns", "ESP_Health", "ESP_Distance",
+            }
+            for _, display in ipairs(ABILITY_PRIORITY) do
+                local flag = ABILITY_ESP_FLAGS[display]
+                if flag then toOff[#toOff + 1] = flag end
+            end
+            for _, name in toOff do
+                local t = Toggles[name]
+                if t then pcall(function() t:SetValue(false) end) end
+            end
+            if getgenv().ChillhubSetKillerAnim then
+                pcall(getgenv().ChillhubSetKillerAnim, "Default")
+            end
+            if Options.Fun_KillerAnim then
+                pcall(function() Options.Fun_KillerAnim:SetValue("Default") end)
+            end
+            Library:Notify("All features turned off", 3)
+        end
+    })
+
+    MenuBox:AddButton({
+        Text = "Unload Script",
+        Func = function() Library:Unload() end
+    })
+
+    Library:OnUnload(function()
+        unloaded = true
+        for _, c in connections do pcall(function() c:Disconnect() end) end
+        pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, true) end)
+        pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, true) end)
+        pcall(function() setInfiniteStamina(false) end)
+        pcall(function() setNoclip(false) end)
+        pcall(function() setJump(false) end)
+        if hudGui then pcall(function() hudGui:Destroy() end) end
+        if espGui then pcall(function() espGui:Destroy() end) end
+    end)
+
+    ThemeManager:SetLibrary(Library)
+    ThemeManager:SetFolder("ChillhubSimple")
+    ThemeManager:ApplyTheme("Tokyo Night")
+    ThemeManager:ApplyToTab(SettingsTab)
+
+    SaveManager:SetLibrary(Library)
+    SaveManager:IgnoreThemeSettings()
+    SaveManager:SetFolder("ChillhubSimple")
+    SaveManager:BuildConfigSection(SettingsTab)
+    SaveManager:LoadAutoloadConfig()
+end
+
+pcall(function()
+    Loading:SetCurrentStep(4)
+    Loading:Continue()
+end)
+
+Library:Notify("Chillhub loaded! Stamina + Survival ready", 5)
+
+getgenv().ChillhubSimple_Unload = function()
+    pcall(function() setInfiniteStamina(false) end)
+    pcall(function() setNoclip(false) end)
+    pcall(function() setJump(false) end)
+    pcall(function() Library:Unload() end)
+end
