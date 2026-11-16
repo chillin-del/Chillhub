@@ -2089,8 +2089,10 @@ function UI.Window(cfg)
         setTheme(Settings.Theme)
         setAccent(Settings.Accent)
     end
+    -- Auto must not open the chooser underneath an active Loading overlay.
+    -- Default to Normal; users can explicitly set Mode = "Lite".
     if Settings.Mode == "Auto" then
-        Mode.Name = UI:_chooseMode()
+        Mode.Name = "Normal"
     else
         Mode.Name = Settings.Mode
     end
