@@ -294,10 +294,41 @@ Library = {
 	KeybindMenu = nil,
 	Config = nil,
 	UnloadCallbacks = {},
+	-- Tab locking (key system): while TabsLocked is true, every tab that is not
+	-- listed in UnlockedTabs is dimmed and cannot be opened.
+	TabsLocked = false,
+	UnlockedTabs = nil,
 }
 Library.__index = Library
 Library.Options = Options
 Library.Toggles = Toggles
+
+-- Obsidian compatibility shim.
+-- Obsidian scripts commonly do `Library.AccentColor = Color3.new(...)` to set
+-- the accent. Chillui stores its accent in Config, so we intercept just that
+-- one key and forward it to SetAccent. Every other field passes straight
+-- through to the table as normal.
+do
+	local accentOverride
+	setmetatable(Library, {
+		__index = function(_, key)
+			if key == "AccentColor" then
+				return accentOverride or (Library.Config and Library.Config.Accent)
+			end
+			return nil
+		end,
+		__newindex = function(t, key, value)
+			if key == "AccentColor" then
+				accentOverride = value
+				if typeof(value) == "Color3" and Library.SetAccent then
+					Library:SetAccent(value)
+				end
+			else
+				rawset(t, key, value)
+			end
+		end,
+	})
+end
 
 local SoundPresets = {
 	["Warm Rise"] = "rbxasset://sounds/electronicpingshort.wav",
@@ -615,7 +646,20 @@ end
 
 local notificationIndex = 0
 
-function Library:Notify(opts)
+function Library:Notify(opts, ...)
+	-- Chillui's native form is a table:
+	--   Library:Notify({ Title = "Hi", Description = "text", Time = 4 })
+	-- Obsidian's form is positional:
+	--   Library:Notify("Hi", 4)  or  Library:Notify("Hi", "text", 4)
+	-- Support both so Obsidian scripts work unchanged.
+	if type(opts) ~= "table" then
+		local title, second, third = opts, ...
+		if type(second) == "number" then
+			opts = { Title = title, Time = second }
+		else
+			opts = { Title = title, Description = second, Time = third }
+		end
+	end
 	opts = opts or {}
 	if not State.gui and not State.splashGui then
 		return
@@ -1509,6 +1553,10 @@ function WindowClass:SelectTab(name)
 	if not tab then
 		return
 	end
+	if Library:IsTabLocked(name) then
+		Library:_TabLockedFeedback(tab)
+		return
+	end
 	if self.Current and self.Current ~= tab then
 		self.Current.Page.Visible = false
 		SelButton(self.Current.Button, false, self.Current.Icon, self.Current.Label)
@@ -1519,6 +1567,38 @@ function WindowClass:SelectTab(name)
 	task.defer(function()
 		tab.Page.CanvasPosition = Vector2.zero
 	end)
+end
+
+-- Refresh every tab button after the lock state changes, and make sure the
+-- window is not left sitting on a tab that is now locked.
+function WindowClass:_ApplyTabLocks()
+	for _, name in ipairs(self.TabOrder or {}) do
+		local tab = self.Tabs[name]
+		if tab then
+			local locked = Library:IsTabLocked(name)
+			tab.Locked = locked
+			if tab.LockBadge then
+				tab.LockBadge.Visible = locked
+			end
+			if locked then
+				tab.Label.TextColor3 = Library.Theme.SubText
+				if tab.Icon and tab.Icon:IsA("TextLabel") then
+					tab.Icon.TextColor3 = Library.Theme.SubText
+				end
+				tab.Button.BackgroundTransparency = 1
+			else
+				SelButton(tab.Button, self.Current == tab, tab.Icon, tab.Label)
+			end
+		end
+	end
+	if self.Current and Library:IsTabLocked(self.Current.Name) then
+		for _, name in ipairs(self.TabOrder or {}) do
+			if not Library:IsTabLocked(name) then
+				self:SelectTab(name)
+				break
+			end
+		end
+	end
 end
 
 function WindowClass:AddTab(name, icon)
@@ -1558,8 +1638,24 @@ function WindowClass:AddTab(name, icon)
 	tab.Icon = iconObj
 	tab.Label = label
 
+	local lockBadge = MakeText("TextLabel", {
+		Name = "LockBadge",
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -10, 0.5, 0),
+		Size = UDim2.fromOffset(16, 16),
+		Text = "⚿",
+		TextSize = 13,
+		TextColor3 = Library.Theme.SubText,
+		Visible = false,
+		Parent = button,
+	}, "subtexts")
+	tab.LockBadge = lockBadge
+	self.TabOrder = self.TabOrder or {}
+	table.insert(self.TabOrder, name)
+
 	button.MouseEnter:Connect(function()
-		if self.Current ~= tab then
+		if self.Current ~= tab and not Library:IsTabLocked(name) then
 			Animate(button, { BackgroundTransparency = 0.9 }, 0.15)
 		end
 	end)
@@ -1940,13 +2036,113 @@ function Library:SetAccent(color)
 	return true
 end
 
-function Library:Toggle()
+function Library:Toggle(force)
 	if not State.root then
 		return
+	end
+	-- Obsidian compatibility: a ToggleCallback that returns false can veto the
+	-- open/close (used for rate limiting or "don't toggle while busy").
+	if force ~= true and type(self.ToggleCallback) == "function" then
+		local ok, allow = pcall(self.ToggleCallback)
+		if ok and allow == false then
+			return
+		end
 	end
 	State.root.Visible = not State.root.Visible
 	if State.root.Visible then
 		self:BlockSound()
+	end
+end
+
+--------------------------------------------------------------------------------
+-- tab locking (key system)
+--------------------------------------------------------------------------------
+
+-- Lock every tab except the ones named in `unlocked` (a list of tab names).
+-- Locked tabs are dimmed, show a padlock, and cannot be opened.
+function Library:LockTabs(unlocked)
+	self.TabsLocked = true
+	self.UnlockedTabs = {}
+	if type(unlocked) == "table" then
+		for _, name in ipairs(unlocked) do
+			self.UnlockedTabs[tostring(name)] = true
+		end
+	elseif unlocked ~= nil then
+		self.UnlockedTabs[tostring(unlocked)] = true
+	end
+	if self.Window and self.Window._ApplyTabLocks then
+		self.Window:_ApplyTabLocks()
+	end
+	return self
+end
+
+-- Unlock everything.
+function Library:UnlockTabs()
+	self.TabsLocked = false
+	self.UnlockedTabs = nil
+	if self.Window and self.Window._ApplyTabLocks then
+		self.Window:_ApplyTabLocks()
+	end
+	return self
+end
+
+-- Lock or unlock a single tab by name.
+function Library:SetTabLocked(name, locked)
+	name = tostring(name)
+	if locked then
+		if not self.TabsLocked then
+			self.TabsLocked = true
+			self.UnlockedTabs = {}
+			-- keep everything that is not this tab unlocked
+			if self.Window then
+				for tabName in pairs(self.Window.Tabs) do
+					if tabName ~= name then
+						self.UnlockedTabs[tabName] = true
+					end
+				end
+			end
+		else
+			self.UnlockedTabs = self.UnlockedTabs or {}
+			self.UnlockedTabs[name] = nil
+		end
+	else
+		self.UnlockedTabs = self.UnlockedTabs or {}
+		self.UnlockedTabs[name] = true
+	end
+	if self.Window and self.Window._ApplyTabLocks then
+		self.Window:_ApplyTabLocks()
+	end
+	return self
+end
+
+function Library:IsTabLocked(name)
+	if not self.TabsLocked then
+		return false
+	end
+	if self.UnlockedTabs and self.UnlockedTabs[tostring(name)] then
+		return false
+	end
+	return true
+end
+
+function Library:_TabLockedFeedback(tab)
+	local label = (tab and tab.Name) or "This tab"
+	self:Notify({
+		Title = "Locked",
+		Description = tostring(label) .. " is locked. Enter the key to unlock it.",
+		Time = 3,
+	})
+	if tab and tab.Button then
+		local button = tab.Button
+		local original = button.BackgroundTransparency
+		button.BackgroundColor3 = Color3.fromRGB(180, 60, 60)
+		button.BackgroundTransparency = 0.55
+		task.delay(0.25, function()
+			if button.Parent then
+				button.BackgroundColor3 = Library.Theme.Element
+				button.BackgroundTransparency = original
+			end
+		end)
 	end
 end
 
@@ -2434,7 +2630,8 @@ function Library:CreateWindow(cfg)
 		Track("texts", searchInput)
 		searchInput:GetPropertyChangedSignal("Text"):Connect(function()
 			local query = searchInput.Text:lower()
-			for name, tab in next, self.Tabs do
+			local tabs = (self.Window and self.Window.Tabs) or {}
+			for name, tab in next, tabs do
 				local match = query == "" or name:lower():find(query, 1, true) ~= nil
 				tab.Button.Visible = match
 			end
@@ -2518,6 +2715,7 @@ function Library:CreateWindow(cfg)
 
 	local window = setmetatable({}, WindowClass)
 	window.Tabs = {}
+	window.TabOrder = {}
 	window.TabCount = 1
 	window.AlwaysOnTop = true
 	window.Gui = gui
