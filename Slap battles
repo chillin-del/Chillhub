@@ -1,5 +1,6 @@
 ------------------------------------------------------------
 -- EDIT ME
+-- Chillhub Slap Battles — ported to Chillui (Obsidian addons removed)
 ------------------------------------------------------------
 local UPDATE_VERSION = "Release"
 local UPDATE_NOTES   = "Candy corn farm, only works in Halloween.\nGlove equip, choose any owned glove.\nPlayer ESP, see players through walls.\nSlap aura, slaps everyone in range.\nSelf slap farm, auto slaps you.\nSlapple farm, auto collects slapples.\nDaily reward, claims your daily reward.\nMovement, fly, speed, jump, noclip, and teleport."
@@ -17,7 +18,6 @@ local ReplicatedStorage   = game:GetService("ReplicatedStorage")
 
 local LocalPlayer   = Players.LocalPlayer
 local SITE_URL      = "https://chillhuboffical.netlify.app/"
-local LOGO_ASSET_ID = "rbxassetid://83288538700579"
 local ACCENT        = Color3.fromRGB(255, 100, 0)
 
 ------------------------------------------------------------
@@ -40,39 +40,23 @@ getgenv().Library = nil
 ------------------------------------------------------------
 -- LOAD UI LIBRARY
 ------------------------------------------------------------
-local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
-local okLib, Library = pcall(function() return loadstring(game:HttpGet(repo.."Library.lua"))() end)
+-- The UI library lives on GitHub as "ChillHubUI.lua" (a copy of Chillui.lua).
+-- Chillui shows its own Normal / Lite splash when the window is created, so
+-- there is no separate loading screen to drive here.
+local repo = "https://raw.githubusercontent.com/chillin-del/Chillhub/main/"
+local okLib, Library = pcall(function() return loadstring(game:HttpGet(repo.."ChillHubUI.lua"))() end)
 if not okLib or not Library then error("[Chillhub] failed to load UI library: "..tostring(Library)) end
-
-local okTheme, ThemeManager = pcall(function() return loadstring(game:HttpGet(repo.."addons/ThemeManager.lua"))() end)
-local okSave,  SaveManager  = pcall(function() return loadstring(game:HttpGet(repo.."addons/SaveManager.lua"))() end)
 
 local Options = Library.Options
 local Toggles = Library.Toggles
 
-pcall(function()
-    Library.Scheme.AccentColor = ACCENT
-    getgenv().Library = Library
-end)
+-- Chillui has theming, fonts, backdrops and configs built in, so the Obsidian
+-- ThemeManager / SaveManager addons are not loaded.
+getgenv().Library = Library
 
 ------------------------------------------------------------
--- LOADING SCREEN
-------------------------------------------------------------
-local Loading = Library:CreateLoading({ Title="Chillhub Slap Battles", Icon=LOGO_ASSET_ID, TotalSteps=3 })
-task.delay(90, function() pcall(function() Loading:Destroy() end) end)
-Loading:SetMessage("Loading Chillhub Slap Battles")
-Loading:SetDescription("i love you"); task.wait(1)
-Loading:SetCurrentStep(1); Loading:SetDescription("Loading ya save fileeee"); task.wait(1)
-Loading:SetCurrentStep(2); Loading:ShowSidebarPage(true)
-Loading.Sidebar:AddLabel("User: "..LocalPlayer.Name)
-    Loading.Sidebar:AddLabel(UPDATE_VERSION); task.wait(1)
-Loading:SetCurrentStep(3); Loading:SetDescription("Ready!"); task.wait(0.6)
-
-pcall(function()
-    Library.Scheme.AccentColor = ACCENT
-    Library:UpdateColorsUsingRegistry()
-end)
-
+-- Chillui shows its own Normal / Lite splash when the window is
+-- created, so there is no separate loading screen to drive here.
 ------------------------------------------------------------
 -- HELPERS
 ------------------------------------------------------------
@@ -408,7 +392,8 @@ end
 local function keyFromOption(name)
     local opt = Options[name]
     if not opt then return nil end
-    local v = opt.Value
+    -- Chillui's KeyPicker stores the bound key string in `.Key`.
+    local v = opt.Key or opt.Value
     if type(v) ~= "string" then return nil end
     local ok, key = pcall(function() return Enum.KeyCode:FromName(v) end)
     if ok then return key end
@@ -454,17 +439,14 @@ end
 local function buildUI()
 
 local Window = Library:CreateWindow({
-    Title         = "Chillhub Slap Battles",
-    Footer        = "Home | Player | Auto Farm | Fun | Slaping | Game | QoL | Settings",
-    Center        = true,
-    AutoShow      = true,
-    Icon          = LOGO_ASSET_ID,
+    Title      = "Chillhub Slap Battles",
+    Footer     = "Home | Player | Auto Farm | Fun | Slaping | Game | QoL | Settings",
+    NotifySide = "Right",
 })
-
-pcall(function()
-    Library.Scheme.AccentColor = ACCENT
-    Library:UpdateColorsUsingRegistry()
-end)
+-- Chillui menu key + appearance (replaces the Obsidian ThemeManager call).
+Library.Config.MenuKey = "P"
+pcall(function() Library:SetTheme("Midnight") end)
+pcall(function() Library:SetAccent(ACCENT) end)
 
 local HomeTab     = Window:AddTab("Home",      "home")
 local PlayerTab   = Window:AddTab("Player",    "user")
@@ -495,9 +477,9 @@ do
 
     local KeysBox = addGroup(HomeTab, "Right", "Default Keybinds", "keyboard")
     local function addKeybind(label, id, default, mode)
-        KeysBox:AddLabel(label):AddKeyPicker(id, { Default=default, NoUI=true, Mode=mode or "Hold", Text=label })
+        KeysBox:AddKeyPicker(id, { Default=default, NoUI=true, Mode=mode or "Hold", Text=label })
     end
-    KeysBox:AddLabel("Open / Close Menu"):AddKeyPicker("MenuKeybind", { Default="P", NoUI=true, Mode="Toggle", Text="Open / Close Menu" })
+    KeysBox:AddKeyPicker("MenuKeybind", { Default=Library.Config.MenuKey or "P", NoUI=true, Text="Open / Close Menu", ChangedCallback=function(key) Library.Config.MenuKey=key end })
     pcall(function() Library.ToggleKeybind = Options.MenuKeybind end)
     addKeybind("Fly Up", "Keybind_FlyUp", "Space")
     addKeybind("Fly Down", "Keybind_FlyDown", "LeftControl")
@@ -2922,33 +2904,23 @@ do
         pcall(function() Library:SetDPIScale(n) end)
     end })
 
-    if okTheme and ThemeManager then
-        pcall(function()
-            ThemeManager:SetLibrary(Library)
-            ThemeManager:SetFolder("ChillhubTSB")
-            ThemeManager:ApplyToTab(SettingsTab)
-        end)
-    else
-        warn("[Chillhub] ThemeManager failed to load")
+    -- Chillui has built-in appearance controls and a config system, so the
+    -- Obsidian ThemeManager / SaveManager sections are replaced with these.
+    local AppearanceBox = addGroup(SettingsTab, "Left", "Appearance", "palette")
+    AppearanceBox:AddDropdown("CH_Theme",{Values=Library.Themes,Default=Library.ThemeName,Text="Theme",Callback=function(v) Library:SetTheme(v) end})
+    AppearanceBox:AddDropdown("CH_Font",{Values=Library.Fonts,Default=Library.FontName,Text="Font",Callback=function(v) Library:SetFont(v) end})
+    AppearanceBox:AddColorPicker("CH_Accent",{Default=ACCENT,Title="Accent color",Callback=function(v) Library:SetAccent(v) end})
+    AppearanceBox:AddSlider("CH_Radius",{Text="Corner radius",Min=0,Max=24,Default=Library.CornerRadius,Rounding=0,Callback=function(v) Library:SetCornerRadius(v) end})
+    if Library.Mode ~= "Lite" then
+        AppearanceBox:AddDropdown("CH_Backdrop",{Values=Library.Backdrops,Default=Library.BackdropName,Text="Backdrop",Callback=function(v) Library:SetBackdrop(v) end})
     end
 
-    if okSave and SaveManager then
-        pcall(function()
-            SaveManager:SetLibrary(Library)
-            SaveManager:IgnoreThemeSettings()
-            SaveManager:SetIgnoreIndexes({"MenuKeybind", "QoL_Theme"})
-            SaveManager:SetFolder("ChillhubTSB")
-            SaveManager:BuildConfigSection(SettingsTab)
-            SaveManager:LoadAutoloadConfig()
-        end)
-    else
-        warn("[Chillhub] SaveManager failed to load")
-    end
-
-    pcall(function()
-        Library.Scheme.AccentColor = ACCENT
-        Library:UpdateColorsUsingRegistry()
-    end)
+    local ConfigBox = addGroup(SettingsTab, "Left", "Configs", "folder")
+    local cfgName = ConfigBox:AddInput("CH_ConfigName",{Text="Config name",Default="default",Placeholder="my-config"})
+    local cfgList = ConfigBox:AddDropdown("CH_ConfigList",{Values=Library:ListConfigs(),Default=1,Text="Saved configs"})
+    ConfigBox:AddButton({Text="Save config",Func=function() Library:SaveConfig(cfgName.Value);cfgList:SetValues(Library:ListConfigs()) end})
+    ConfigBox:AddButton({Text="Load config",Func=function() local c=cfgList.Value;if c and c~="" then Library:LoadConfig(c) end end})
+    ConfigBox:AddButton({Text="Delete config",Func=function() local c=cfgList.Value;if c and c~="" then Library:DeleteConfig(c) end;cfgList:SetValues(Library:ListConfigs()) end})
 end
 
 Library:OnUnload(function()
@@ -2964,11 +2936,10 @@ end -- buildUI
 local okBuild, buildErr = xpcall(buildUI, function(e) return tostring(e).."\n"..debug.traceback() end)
 if not okBuild then
     warn("[Chillhub] UI build failed:", buildErr)
-    pcall(function() Loading:ShowErrorPage(true); Loading:SetErrorMessage("Failed to build the UI, check the console (F9) for details.") end)
+    pcall(function() Library:Notify("Chillhub Slap Battles failed to build. Check the console (F9).",6) end)
     return
 end
 
-pcall(function() Loading:SetCurrentStep(3); Loading:Continue() end)
 getgenv().ChillhubLoaded = true
 getgenv().Library = Library
 getgenv().ChillhubUnload = function()
