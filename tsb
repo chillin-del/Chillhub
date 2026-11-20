@@ -1,13 +1,13 @@
 ------------------------------------------------------------
 
 -- EDIT ME
--- Chillhub v9 — ported to Chillui (Obsidian addons removed)
+-- Chillhub v4 — ported to Chillui 
 
 ------------------------------------------------------------
 
-local UPDATE_VERSION = "9"
+local UPDATE_VERSION = "10"
 
-local UPDATE_NOTES   = "V3 Update 9 features ported — Chillui UI"
+local UPDATE_NOTES   = "twisted and stuff way more settings for techs"
 
 ------------------------------------------------------------
 
@@ -1007,6 +1007,16 @@ do
     addKeybind("Game Dash Key (Faster Dashes)",  "Keybind_GameDash",  "Q")
 
     addKeybind("Lock-On (toggle)",               "LockOn_Key",        "T")
+
+    addKeybind("Instant Twisted (run)",          "InstantTwisted_Key","B")
+
+    addKeybind("V1 Tech (run)",                  "Tech_V1_Key",       "G")
+
+    addKeybind("Dripzdash (run)",                "Tech_Dripzdash_Key","H")
+
+    addKeybind("Tornado Tech (run)",             "Tech_Tornado_Key",  "J")
+
+    addKeybind("MeowTech (run)",                 "Tech_Meow_Key",     "K")
 
     local RejoinBox = addGroup(HomeTab, "Right", "Rejoin", "refresh-cw")
 
@@ -2757,680 +2767,299 @@ do
 
     -- ============================================================
 
-    -- CHILL TECH HUB  (embedded, runs via loadstring)
+    -- TECHS — V1, Dripzdash, Tornado, MeowTech
 
-    -- Per-config ping delay added. MeowTech stays. Themes stay.
+    -- No floating GUI, no loadstring. Every setting lives in this menu.
+
+    -- Each tech has its own Enabled + Auto Jump toggle. With Auto Jump off,
+    -- the tech still fires but you jump yourself (safer for macro checks).
 
     -- ============================================================
 
-    local ExternalBox = addGroup(MacrosTab,"Left","External Scripts (Tech Suite)","download")
-
-    -- NOTE: This string is loaded via loadstring() so it runs as its own
-
-    -- environment. All TSB services are re-acquired inside it.
-
-    local CHILL_TECH_SOURCE = [=====[
-
-local RunService        = game:GetService('RunService')
-
-local Players           = game:GetService('Players')
-
-local UserInputService  = game:GetService('UserInputService')
-
-local VirtualInputManager = game:GetService('VirtualInputManager')
-
-local LocalPlayer       = Players.LocalPlayer
-
-local ScriptId = math.random(1,1000000)
-
-_G.VuxLethalId = ScriptId
-
-local function IsCurrent() return _G.VuxLethalId == ScriptId end
-
--- Runtime values (set by LoadConfig)
-
-local DelayValue    = 0.38
-
-local AccuracyValue = 15
-
-local CancelValue   = 0.4
-
-local PingDelayMs   = 0        -- per-config ping delay
-
-local ActiveIdx     = 1        -- which config the delay above belongs to
-
-local Enabled       = true
-
-local IsExecuting   = false
-
-local IsNoclipping  = false
-
-local ConfirmTime   = 0
-
-local DoJump           = false
-
-local DoRotateCamera   = false
-
-local Flick1Angle      = 180
-
-local Flick2Delay      = 8
-
-local Flick2Angle      = 190
-
-local Flick3Delay      = 7
-
-local Flick3Angle      = 360
-
-local DoLockOn         = false
-
-local LockOnAfter      = 3
-
-local LockOnPrecision  = 54
-
-local LockOnDelay      = 4
-
-local ExecMode         = 'flick'
-
-local JumpValue        = 55
-
--- Configs — each has a PingMs field (milliseconds of extra delay before dash)
-
-local Configs = {
-
-    {Name='Loop Dash',   ExecMode='flick', PingMs=0,  Accuracy=18,   Cancel=0.45, Jump=false, JumpValue=55,  RotateCamera=false, F1Angle=175, F2Delay=5, F2Angle=185, F3Delay=4, F3Angle=175,  LockOn=true,  LockOnAfter=3, LockOnPrecision=65, LockOnDelay=2},
-
-    {Name='V1',          ExecMode='v1',    PingMs=0,  Accuracy=15,   Cancel=0.4,  Jump=true,  JumpValue=55,  RotateCamera=false, F1Angle=0,   F2Delay=0, F2Angle=0,   F3Delay=0, F3Angle=0,    LockOn=false, LockOnAfter=3, LockOnPrecision=54, LockOnDelay=4},
-
-    {Name='V2',          ExecMode='v2',    PingMs=0,  Accuracy=0.25, Cancel=0.4,  Jump=true,  JumpValue=55,  RotateCamera=false, F1Angle=0,   F2Delay=0, F2Angle=0,   F3Delay=0, F3Angle=0,    LockOn=false, LockOnAfter=3, LockOnPrecision=54, LockOnDelay=4},
-
-    {Name='V3',          ExecMode='v1',    PingMs=0,  Accuracy=12,   Cancel=0.38, Jump=true,  JumpValue=60,  RotateCamera=true,  F1Angle=180, F2Delay=4, F2Angle=180, F3Delay=3, F3Angle=360,  LockOn=true,  LockOnAfter=1, LockOnPrecision=85, LockOnDelay=1},
-
-    {Name='Tornado Tech',ExecMode='flick', PingMs=0,  Accuracy=8,    Cancel=0.32, Jump=true,  JumpValue=65,  RotateCamera=false, F1Angle=120, F2Delay=2, F2Angle=180, F3Delay=2, F3Angle=360,  LockOn=true,  LockOnAfter=1, LockOnPrecision=98, LockOnDelay=1},
-
-    {Name='MeowTech',    ExecMode='meow',  PingMs=0,  Accuracy=12,   Cancel=0.4,  Jump=true,  JumpValue=55,  RotateCamera=false, F1Angle=0,   F2Delay=0, F2Angle=0,   F3Delay=0, F3Angle=0,    LockOn=false, LockOnAfter=3, LockOnPrecision=54, LockOnDelay=4},
-
-}
-
--- Keep each tech's ping across closing/reopening the Chill Tech panel
-
-_G.ChillTechPings = _G.ChillTechPings or {}
-
-for _,C in ipairs(Configs) do
-
-    local saved=_G.ChillTechPings[C.Name]
-
-    if type(saved)=="number" then C.PingMs=math.clamp(math.floor(saved),0,2000) end
-
-end
-
-local function FireDash()
-
-    local c=LocalPlayer.Character; if not c then return end
-
-    local rm=c:FindFirstChild('Communicate')
-
-    if rm then rm:FireServer({Dash=Enum.KeyCode.W,Key=Enum.KeyCode.Q,Goal='KeyPress'}) end
-
-end
-
--- Real dash input (the Communicate remote above is emotes only). Only
-
--- MeowTech needs an actual dash; the other techs ride the uppercut lunge.
-
-local function DashKey()
-
-    VirtualInputManager:SendKeyEvent(true,Enum.KeyCode.Q,false,game)
-
-    task.wait(0.03)
-
-    VirtualInputManager:SendKeyEvent(false,Enum.KeyCode.Q,false,game)
-
-end
-
-local function Clip()
-
-    IsNoclipping=false
-
-    local c=LocalPlayer.Character; if not c then return end
-
-    local h=c:FindFirstChild('Humanoid'); if h then h.AutoRotate=true end
-
-end
-
-local function ForceCancel()
-
-    Clip()
-
-    local c=LocalPlayer.Character
-
-    local Root=c and c:FindFirstChild('HumanoidRootPart')
-
-    if Root then
-
-        for _,Obj in pairs(Root:GetChildren()) do
-
-            if Obj:IsA('BodyVelocity') or Obj:IsA('LinearVelocity') or Obj:IsA('Attachment') or Obj:IsA('BodyAngularVelocity') then Obj:Destroy() end
-
+    local TechBox = addGroup(MacrosTab,"Left","Techs","zap")
+
+    local techBusy = false
+    local techNoclip = false
+    local techConns = {}
+
+    local DASH_ANIMS = { ["rbxassetid://10503381238"]=true, ["rbxassetid://13379003796"]=true }
+
+    local TECH_DEFS = {
+        { key="V1",        name="V1",           mode="v1",    accuracy=15,   cancel=0.40, jump=55, lockOn=false, lockPrecision=54, lockDelay=4 },
+        { key="Dripzdash", name="Dripzdash",    mode="v2",    accuracy=0.25, cancel=0.40, jump=55, lockOn=false, lockPrecision=54, lockDelay=4 },
+        { key="Tornado",   name="Tornado Tech", mode="flick", accuracy=8,    cancel=0.32, jump=65, f1=120, f2Delay=2, f2=180, f3Delay=2, f3=360, lockOn=true, lockPrecision=98, lockDelay=1 },
+        { key="Meow",      name="MeowTech",     mode="meow",  accuracy=12,   cancel=0.40, jump=55, lockOn=false, lockPrecision=54, lockDelay=4 },
+    }
+
+    local function techToggle(def, suffix)
+        local t = Toggles["Tech_"..def.key.."_"..suffix]
+        return t and t.Value == true
+    end
+
+    local function techNum(def, suffix, default)
+        local o = Options["Tech_"..def.key.."_"..suffix]
+        return tonumber(o and o.Value) or default
+    end
+
+    -- Build the UI: one group, every tech is a toggle with its own settings
+    for _,def in ipairs(TECH_DEFS) do
+        local pre = "Tech_"..def.key.."_"
+        TechBox:AddToggle(pre.."Enabled",  { Text=def.name, Default=false })
+        TechBox:AddToggle(pre.."AutoJump", { Text="   Auto Jump", Default=true })
+        TechBox:AddInput(pre.."Ping",      { Text="   Ping Delay (ms)", Default="0", Numeric=true, Finished=false, Placeholder="0-2000" })
+        TechBox:AddInput(pre.."Accuracy",  { Text="   Accuracy (studs)", Default=tostring(def.accuracy), Numeric=true, Finished=false, Placeholder="0-200" })
+        TechBox:AddInput(pre.."Cancel",    { Text="   Cancel Time (s)", Default=tostring(def.cancel), Numeric=true, Finished=false, Placeholder="0.1-2" })
+        TechBox:AddInput(pre.."JumpPower", { Text="   Jump Power", Default=tostring(def.jump), Numeric=true, Finished=false, Placeholder="0-200" })
+        if def.mode == "flick" then
+            TechBox:AddInput(pre.."F1", { Text="   Flick 1 Angle", Default=tostring(def.f1), Numeric=true, Finished=false })
+            TechBox:AddInput(pre.."F2", { Text="   Flick 2 Angle", Default=tostring(def.f2), Numeric=true, Finished=false })
+            TechBox:AddInput(pre.."F3", { Text="   Flick 3 Angle", Default=tostring(def.f3), Numeric=true, Finished=false })
         end
-
-        Root.AssemblyLinearVelocity=Vector3.zero
-
-    end
-
-end
-
-local function GetTorsoTarget()
-
-    local c=LocalPlayer.Character; if not c then return nil end
-
-    local Root=c:FindFirstChild('HumanoidRootPart'); if not Root then return nil end
-
-    local Params=OverlapParams.new(); Params.FilterType=Enum.RaycastFilterType.Exclude; Params.FilterDescendantsInstances={c}
-
-    local Parts=workspace:GetPartBoundsInRadius(Root.Position,AccuracyValue+30,Params)
-
-    local Target,Dist=nil,999
-
-    for _,Part in pairs(Parts) do
-
-        local Model=Part:FindFirstAncestorOfClass('Model')
-
-        if Model and Model:FindFirstChild('Humanoid') and Model~=c then
-
-            local Torso=Model:FindFirstChild('UpperTorso') or Model:FindFirstChild('Torso') or Model:FindFirstChild('HumanoidRootPart')
-
-            if Torso then local D=(Root.Position-Torso.Position).Magnitude; if D<Dist then Dist=D; Target=Torso end end
-
+        if def.lockOn then
+            TechBox:AddToggle(pre.."LockOn", { Text="   Lock On", Default=true })
+            TechBox:AddInput(pre.."LockPrecision", { Text="   Lock Precision (%)", Default=tostring(def.lockPrecision), Numeric=true, Finished=false })
         end
-
     end
 
-    return Target
+    TechBox:AddLabel({ Text="Techs fire on the dash uppercut when enabled. Auto Jump OFF = no automatic jump (you jump manually). Keybinds for each tech are in the Home tab.", DoesWrap=true })
 
-end
-
-local function ApplyFlick(Root,AngleDeg) if Root and Root.Parent then Root.CFrame=Root.CFrame*CFrame.Angles(0,math.rad(AngleDeg),0) end end
-
-local function LockOnToTarget(Root,Torso,PrecPct)
-
-    if not Root or not Root.Parent or not Torso or not Torso.Parent then return end
-
-    Root.CFrame=Root.CFrame:Lerp(CFrame.lookAt(Root.Position,Vector3.new(Torso.Position.X,Root.Position.Y,Torso.Position.Z)),math.clamp(PrecPct/100,0,1))
-
-end
-
--- MeowTech execution: dash onto the nearest target and stay stuck to them
-
-local function ExecuteMeow()
-
-    local c=LocalPlayer.Character; if not c then return false end
-
-    local Root=c:FindFirstChild('HumanoidRootPart')
-
-    local Humanoid=c:FindFirstChild('Humanoid')
-
-    if not Root or not Humanoid then return false end
-
-    local Torso=GetTorsoTarget(); if not Torso then return false end
-
-    local Model=Torso:FindFirstAncestorOfClass('Model')
-
-    local Anchor=(Model and Model:FindFirstChild('HumanoidRootPart')) or Torso
-
-    IsNoclipping=true
-
-    if Humanoid.Parent then Humanoid.AutoRotate=false end
-
-    DashKey()
-
-    local st=tick(); local conn
-
-    conn=RunService.Heartbeat:Connect(function()
-
-        if not IsCurrent() or not Enabled or not Anchor.Parent or not Root.Parent or (tick()-st>=0.5) then
-
-            if conn then conn:Disconnect() end
-
-            IsExecuting=false; IsNoclipping=false
-
-            if Root.Parent then Root.CFrame=CFrame.new(Root.Position) end
-
-            Clip()
-
-            return
-
-        end
-
-        local ap=Anchor.Position
-
-        Root.CFrame=CFrame.new(ap+Vector3.new(0,2.2,0))*CFrame.Angles(math.rad(90),0,0)
-
-        Root.AssemblyLinearVelocity=Vector3.zero
-
-        Root.AssemblyAngularVelocity=Vector3.zero
-
-    end)
-
-    return true
-
-end
-
-local function ExecuteDash()
-
-    if not IsCurrent() or IsExecuting or not Enabled then return end
-
-    local c=LocalPlayer.Character
-
-    local Root=c and c:FindFirstChild('HumanoidRootPart')
-
-    local Humanoid=c and c:FindFirstChild('Humanoid')
-
-    if not Root or not Humanoid then return end
-
-    -- read the ping of the tech that is actually selected, at call time,
-
-    -- so editing its box takes effect on the very next uppercut
-
-    local ActiveCfg=Configs[ActiveIdx]
-
-    local Ping=math.clamp(tonumber(ActiveCfg and ActiveCfg.PingMs) or PingDelayMs or 0,0,2000)
-
-    if ExecMode=='meow' then
-
-        IsExecuting=true
-
-        task.wait(0.38 + Ping/1000)
-
-        if not IsCurrent() or not Enabled then IsExecuting=false; return end
-
-        if not ExecuteMeow() then IsExecuting=false; Clip() end
-
-        return
-
+    local function techFireDash()
+        local c = LocalPlayer.Character
+        if not c then return end
+        local rm = c:FindFirstChild("Communicate")
+        if rm then rm:FireServer({ Dash=Enum.KeyCode.W, Key=Enum.KeyCode.Q, Goal="KeyPress" }) end
     end
 
-    local Torso=GetTorsoTarget(); if not Torso then Clip(); return end
-
-    IsExecuting=true
-
-    -- base delay (0.38s) + optional ping compensation
-
-    task.wait(0.38 + Ping/1000)
-
-    if not IsCurrent() then IsExecuting=false; return end
-
-    if not Torso.Parent then IsExecuting=false; Clip(); return end
-
-    if ExecMode=='v1' then
-
-        Root.AssemblyLinearVelocity=Vector3.new(Root.AssemblyLinearVelocity.X,JumpValue,Root.AssemblyLinearVelocity.Z)
-
-        IsNoclipping=true; FireDash()
-
-        local StartT=tick(); local ForwardDir=(Torso.Position-Root.Position).Unit; local SideVec=Vector3.new(-ForwardDir.Z,0,ForwardDir.X)
-
-        if Humanoid and Humanoid.Parent then Humanoid.AutoRotate=false end
-
-        local Bav=Instance.new('BodyAngularVelocity'); Bav.MaxTorque=Vector3.new(0,1000000,0); Bav.P=15000; Bav.Parent=Root
-
-        local Conn; Conn=RunService.Heartbeat:Connect(function()
-
-            if not IsCurrent() or not Torso or not Torso.Parent or not Root or not Root.Parent then if Bav then Bav:Destroy() end; Clip(); IsExecuting=false; if Conn then Conn:Disconnect() end; return end
-
-            local Elapsed=tick()-StartT; local TorsoPos=Torso.Position; local RootPos=Root.Position
-
-            local Angle=(Elapsed/0.45)*(math.pi/1.5); local Radius=AccuracyValue*(1-math.clamp(Elapsed/0.45,0,1))
-
-            local TLP=TorsoPos+(SideVec*math.cos(Angle)+ForwardDir*math.sin(Angle))*Radius
-
-            local LookCF=CFrame.lookAt(RootPos,Vector3.new(TLP.X,RootPos.Y,TLP.Z))
-
-            local RelCF=Root.CFrame:Inverse()*LookCF; local _,Y,_=RelCF:ToEulerAnglesXYZ()
-
-            if Bav and Bav.Parent then Bav.AngularVelocity=Vector3.new(0,math.clamp(Y*30,-200,200),0) end
-
-            local DistXZ=(Vector2.new(RootPos.X,RootPos.Z)-Vector2.new(TorsoPos.X,TorsoPos.Z)).Magnitude
-
-            if Elapsed>CancelValue and DistXZ<2.2 then if Bav then Bav:Destroy() end; ForceCancel(); IsExecuting=false; if Conn then Conn:Disconnect() end; return end
-
-            if not Enabled or Elapsed>1.5 then if Bav then Bav:Destroy() end; Clip(); IsExecuting=false; if Conn then Conn:Disconnect() end; return end
-
-        end)
-
-    elseif ExecMode=='v2' then
-
-        Root.AssemblyLinearVelocity=Vector3.new(Root.AssemblyLinearVelocity.X,JumpValue,Root.AssemblyLinearVelocity.Z)
-
-        IsNoclipping=true; FireDash()
-
-        local StartT=tick(); local Flipped=false; local FlipDelay=AccuracyValue
-
-        if Humanoid and Humanoid.Parent then Humanoid.AutoRotate=false end
-
-        local Conn; Conn=RunService.Heartbeat:Connect(function()
-
-            if not IsCurrent() or not Torso or not Torso.Parent or not Root or not Root.Parent then Clip(); IsExecuting=false; if Conn then Conn:Disconnect() end; return end
-
-            local Elapsed=tick()-StartT; local TorsoPos=Torso.Position; local RootPos=Root.Position
-
-            if Elapsed>=FlipDelay and not Flipped then Root.CFrame=Root.CFrame*CFrame.Angles(0,math.pi,0); Flipped=true end
-
-            local DistXZ=(Vector2.new(RootPos.X,RootPos.Z)-Vector2.new(TorsoPos.X,TorsoPos.Z)).Magnitude
-
-            if Elapsed>CancelValue and DistXZ<2.2 then ForceCancel(); IsExecuting=false; if Conn then Conn:Disconnect() end; return end
-
-            if not Enabled or Elapsed>1.5 then Clip(); IsExecuting=false; if Conn then Conn:Disconnect() end; return end
-
-        end)
-
-    else -- flick mode
-
-        if DoJump then Root.AssemblyLinearVelocity=Vector3.new(Root.AssemblyLinearVelocity.X,JumpValue,Root.AssemblyLinearVelocity.Z) end
-
-        FireDash()
-
-        local ForwardDir=(Torso.Position-Root.Position).Unit; local SideVec=Vector3.new(-ForwardDir.Z,0,ForwardDir.X)
-
-        ApplyFlick(Root,Flick1Angle)
-
-        if LockOnAfter==1 and DoLockOn then task.delay(LockOnDelay/10,function() LockOnToTarget(Root,Torso,LockOnPrecision) end) end
-
-        task.delay(Flick2Delay/50,function()
-
-            if not IsCurrent() or not Root or not Root.Parent then return end
-
-            ApplyFlick(Root,Flick2Angle)
-
-            if DoRotateCamera then local Cam=workspace.CurrentCamera; if Cam then Cam.CFrame=Cam.CFrame*CFrame.Angles(0,math.rad(Flick2Angle),0) end end
-
-            if LockOnAfter==2 and DoLockOn then task.delay(LockOnDelay/10,function() LockOnToTarget(Root,Torso,LockOnPrecision) end) end
-
-        end)
-
-        task.delay((Flick2Delay+Flick3Delay)/50,function()
-
-            if not IsCurrent() or not Root or not Root.Parent then return end
-
-            ApplyFlick(Root,Flick3Angle)
-
-            if DoRotateCamera then local Cam=workspace.CurrentCamera; if Cam then Cam.CFrame=Cam.CFrame*CFrame.Angles(0,math.rad(Flick3Angle),0) end end
-
-            if LockOnAfter==3 and DoLockOn then task.delay(LockOnDelay/10,function() LockOnToTarget(Root,Torso,LockOnPrecision) end) end
-
-        end)
-
-        if Humanoid and Humanoid.Parent then Humanoid.AutoRotate=false end
-
-        local StartT=tick()
-
-        local Bav=Instance.new('BodyAngularVelocity'); Bav.MaxTorque=Vector3.new(0,1000000,0); Bav.P=15000; Bav.Parent=Root
-
-        local Conn; Conn=RunService.Heartbeat:Connect(function()
-
-            if not IsCurrent() or not Torso or not Torso.Parent or not Root or not Root.Parent then if Bav then Bav:Destroy() end; Clip(); IsExecuting=false; if Conn then Conn:Disconnect() end; return end
-
-            local Elapsed=tick()-StartT; local TorsoPos=Torso.Position; local RootPos=Root.Position
-
-            local Angle=(Elapsed/0.45)*(math.pi/1.5); local Radius=AccuracyValue*(1-math.clamp(Elapsed/0.45,0,1))
-
-            local TLP=TorsoPos+(SideVec*math.cos(Angle)+ForwardDir*math.sin(Angle))*Radius
-
-            local LookCF=CFrame.lookAt(RootPos,Vector3.new(TLP.X,RootPos.Y,TLP.Z))
-
-            local RelCF=Root.CFrame:Inverse()*LookCF; local _,Y,_=RelCF:ToEulerAnglesXYZ()
-
-            if Bav and Bav.Parent then Bav.AngularVelocity=Vector3.new(0,math.clamp(Y*30,-200,200),0) end
-
-            local DistXZ=(Vector2.new(RootPos.X,RootPos.Z)-Vector2.new(TorsoPos.X,TorsoPos.Z)).Magnitude
-
-            if Elapsed>CancelValue and DistXZ<2.2 then if Bav then Bav:Destroy() end; ForceCancel(); IsExecuting=false; if Conn then Conn:Disconnect() end; return end
-
-            if not Enabled or Elapsed>1.5 then if Bav then Bav:Destroy() end; Clip(); IsExecuting=false; if Conn then Conn:Disconnect() end; return end
-
-        end)
-
+    local function techDashKey()
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Q, false, game)
+        task.wait(0.03)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Q, false, game)
     end
 
-end
-
-RunService.PreSimulation:Connect(function()
-
-    if not IsCurrent() or not IsNoclipping then return end
-
-    local c=LocalPlayer.Character; if not c then return end
-
-    for _,Model in pairs(workspace:GetChildren()) do
-
-        if Model:IsA('Model') and Model~=c and Model:FindFirstChildOfClass('Humanoid') then
-
-            for _,Part in pairs(Model:GetDescendants()) do if Part:IsA('BasePart') and Part.CanCollide then Part.CanCollide=false end end
-
-        end
-
+    local function techClip()
+        techNoclip = false
+        local c = LocalPlayer.Character
+        if not c then return end
+        local h = c:FindFirstChildOfClass("Humanoid")
+        if h then h.AutoRotate = true end
     end
 
-end)
-
--- ===================== GUI =====================
-
-local ExistingGui=game.CoreGui:FindFirstChild('VuxLoopDashGui'); if ExistingGui then ExistingGui:Destroy() end
-
-local ScreenGui=Instance.new('ScreenGui'); ScreenGui.Name='VuxLoopDashGui'; ScreenGui.ResetOnSpawn=false; ScreenGui.Parent=game.CoreGui
-
-local MainFrame=Instance.new('Frame',ScreenGui)
-
-MainFrame.BackgroundColor3=Color3.fromRGB(200,80,0); MainFrame.Size=UDim2.new(0,240,0,45); MainFrame.Position=UDim2.new(0.05,0,0.4,0); MainFrame.Draggable=true; MainFrame.Active=true
-
-local MG=Instance.new('UIGradient',MainFrame); MG.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(240,110,0)),ColorSequenceKeypoint.new(1,Color3.fromRGB(150,50,0))}); MG.Rotation=90
-
-Instance.new('UICorner',MainFrame).CornerRadius=UDim.new(0,8)
-
-local MS=Instance.new('UIStroke',MainFrame); MS.Color=Color3.fromRGB(255,140,0); MS.Thickness=1.2
-
-local TitleLabel=Instance.new('TextLabel',MainFrame); TitleLabel.Text='Chill Tech 🎃'; TitleLabel.Size=UDim2.new(0.45,0,1,0); TitleLabel.Position=UDim2.new(0.03,0,0,0); TitleLabel.TextColor3=Color3.fromRGB(255,255,255); TitleLabel.BackgroundTransparency=1; TitleLabel.Font=Enum.Font.GothamBold; TitleLabel.TextSize=11; TitleLabel.TextXAlignment=Enum.TextXAlignment.Left
-
-local function MakeHeaderBtn(text,xpos) local Btn=Instance.new('TextButton',MainFrame); Btn.Text=text; Btn.Size=UDim2.new(0,22,0,22); Btn.Position=UDim2.new(xpos,0,0.18,0); Btn.BackgroundColor3=Color3.fromRGB(180,60,0); Btn.TextColor3=Color3.fromRGB(255,255,255); Instance.new('UICorner',Btn).CornerRadius=UDim.new(0,5); return Btn end
-
-local CloseBtn=MakeHeaderBtn('-',0.50); CloseBtn.BackgroundColor3=Color3.fromRGB(220,50,50)
-
-local GearBtn=MakeHeaderBtn('⚙',0.62); local CfgBtn=MakeHeaderBtn('📋',0.74); local ThemeBtn=MakeHeaderBtn('🎨',0.86)
-
-local function MakePanel(h,canvas)
-
-    local F=Instance.new('ScrollingFrame',MainFrame); F.BackgroundColor3=Color3.fromRGB(30,14,6); F.Size=UDim2.new(1,0,0,h); F.Position=UDim2.new(0,0,1,8); F.Visible=false; F.CanvasSize=UDim2.new(0,0,0,canvas); F.ScrollBarThickness=3
-
-    Instance.new('UICorner',F).CornerRadius=UDim.new(0,8); local S=Instance.new('UIStroke',F); S.Color=Color3.fromRGB(255,120,0); S.Thickness=1
-
-    local L=Instance.new('UIListLayout',F); L.Padding=UDim.new(0,4); L.HorizontalAlignment=Enum.HorizontalAlignment.Center; return F
-
-end
-
-local SettingsPanel=MakePanel(160,260); local ConfigPanel=MakePanel(260,500); local ThemePanel=MakePanel(150,220)
-
-local AllPanels={SettingsPanel,ConfigPanel,ThemePanel}
-
-local function TogglePanel(p) for _,panel in pairs(AllPanels) do panel.Visible=(panel==p) and not p.Visible end end
-
--- settings panel
-
-local StatusBtn=Instance.new('TextButton',SettingsPanel); StatusBtn.Size=UDim2.new(0.92,0,0,26); StatusBtn.Text='Status: ON'; StatusBtn.BackgroundColor3=Color3.fromRGB(255,120,0); StatusBtn.TextColor3=Color3.fromRGB(255,255,255); StatusBtn.Font=Enum.Font.GothamBold; StatusBtn.TextSize=12; Instance.new('UICorner',StatusBtn).CornerRadius=UDim.new(0,5)
-
-StatusBtn.MouseButton1Click:Connect(function() Enabled=not Enabled; StatusBtn.Text=Enabled and 'Status: ON' or 'Status: OFF'; StatusBtn.BackgroundColor3=Enabled and Color3.fromRGB(255,120,0) or Color3.fromRGB(200,50,50) end)
-
-local settingsNote=Instance.new('TextLabel',SettingsPanel); settingsNote.Size=UDim2.new(0.92,0,0,30); settingsNote.BackgroundTransparency=1; settingsNote.TextWrapped=true; settingsNote.TextColor3=Color3.fromRGB(180,130,80); settingsNote.Font=Enum.Font.Gotham; settingsNote.TextSize=9; settingsNote.Text='Per-config ping is in the 📋 panel next to each tech.'
-
--- config panel
-
-local ActiveLabel=Instance.new('TextLabel',ConfigPanel); ActiveLabel.Size=UDim2.new(0.92,0,0,22); ActiveLabel.Text='Active: Loop Dash'; ActiveLabel.TextColor3=Color3.fromRGB(255,200,100); ActiveLabel.BackgroundTransparency=1; ActiveLabel.Font=Enum.Font.GothamBold; ActiveLabel.TextSize=11
-
-local DescLabel=Instance.new('TextLabel',ConfigPanel); DescLabel.Size=UDim2.new(0.92,0,0,28); DescLabel.TextWrapped=true; DescLabel.TextColor3=Color3.fromRGB(170,170,170); DescLabel.BackgroundTransparency=1; DescLabel.Font=Enum.Font.Gotham; DescLabel.TextSize=9; DescLabel.TextXAlignment=Enum.TextXAlignment.Left
-
-local ConfigDescs={
-
-    'Loop Dash: fire after mini uppercut. Loops under/behind torso.',
-
-    'V1: spiral steering + jump + noclip. Direct torso lock.',
-
-    'V2: jump + 180 flip onto target spine.',
-
-    'V3: aggressive high-precision torso tracking.',
-
-    'Tornado Tech: fast spin snap-to-torso flick.',
-
-    'MeowTech: instant sticky attachment.'
-
-}
-
--- Per-config ping input shown below each button
-
-local ConfigBtns={}; local PingBoxes={}
-
-local function LoadConfig(idx)
-
-    local C=Configs[idx]; if not C then return end
-
-    ExecMode=C.ExecMode or 'flick'; AccuracyValue=C.Accuracy; CancelValue=C.Cancel; DoJump=C.Jump; JumpValue=C.JumpValue or 55; DoRotateCamera=C.RotateCamera
-
-    Flick1Angle=C.F1Angle; Flick2Delay=C.F2Delay; Flick2Angle=C.F2Angle; Flick3Delay=C.F3Delay; Flick3Angle=C.F3Angle
-
-    DoLockOn=C.LockOn; LockOnAfter=C.LockOnAfter; LockOnPrecision=C.LockOnPrecision; LockOnDelay=C.LockOnDelay
-
-    PingDelayMs = C.PingMs or 0
-
-    ActiveIdx = idx
-
-    ActiveLabel.Text='Active: '..C.Name..'   |   ping '..tostring(C.PingMs or 0)..'ms'; DescLabel.Text=ConfigDescs[idx] or ''
-
-    for i,B in pairs(ConfigBtns) do B.BackgroundColor3=(i==idx) and Color3.fromRGB(200,100,0) or Color3.fromRGB(90,45,20) end
-
-end
-
-for i,C in ipairs(Configs) do
-
-    -- main button
-
-    local Btn=Instance.new('TextButton',ConfigPanel); Btn.Size=UDim2.new(0.92,0,0,30); Btn.BackgroundColor3=(i==1) and Color3.fromRGB(200,100,0) or Color3.fromRGB(90,45,20); Btn.TextColor3=Color3.fromRGB(255,255,255); Btn.Font=Enum.Font.GothamBold; Btn.TextSize=11; Btn.Text=C.Name; Instance.new('UICorner',Btn).CornerRadius=UDim.new(0,5); local S=Instance.new('UIStroke',Btn); S.Color=Color3.fromRGB(255,150,0); S.Thickness=1
-
-    Btn.MouseButton1Click:Connect(function() LoadConfig(i) end); ConfigBtns[i]=Btn
-
-    -- per-config ping row
-
-    local pRow=Instance.new('Frame',ConfigPanel); pRow.Size=UDim2.new(0.92,0,0,24); pRow.BackgroundTransparency=1
-
-    local pLbl=Instance.new('TextLabel',pRow); pLbl.Text=C.Name..' ping (ms):'; pLbl.Size=UDim2.new(0.62,0,1,0); pLbl.BackgroundTransparency=1; pLbl.TextColor3=Color3.fromRGB(200,160,100); pLbl.Font=Enum.Font.Gotham; pLbl.TextSize=9; pLbl.TextXAlignment=Enum.TextXAlignment.Left
-
-    local pBox=Instance.new('TextBox',pRow); pBox.Size=UDim2.new(0.35,0,0.82,0); pBox.Position=UDim2.new(0.63,0,0.09,0); pBox.Text=tostring(C.PingMs); pBox.BackgroundColor3=Color3.fromRGB(70,30,10); pBox.TextColor3=Color3.fromRGB(255,220,180); pBox.Font=Enum.Font.Gotham; pBox.TextSize=10; Instance.new('UICorner',pBox).CornerRadius=UDim.new(0,4)
-
-    local capturedIdx=i
-
-    pBox.FocusLost:Connect(function()
-
-        local v=tonumber(pBox.Text)
-
-        if v then
-
-            Configs[capturedIdx].PingMs=math.clamp(math.floor(v),0,2000)
-
-            _G.ChillTechPings[Configs[capturedIdx].Name]=Configs[capturedIdx].PingMs
-
-            -- typing into the active config's box must take effect immediately,
-
-            -- not only after re-clicking the config
-
-            if capturedIdx==ActiveIdx then
-
-                PingDelayMs=Configs[capturedIdx].PingMs
-
-                ActiveLabel.Text='Active: '..Configs[ActiveIdx].Name..'   |   ping '..tostring(PingDelayMs)..'ms'
-
+    local function techForceCancel()
+        techClip()
+        local c = LocalPlayer.Character
+        local root = c and c:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        for _,obj in pairs(root:GetChildren()) do
+            if obj:IsA("BodyVelocity") or obj:IsA("LinearVelocity") or obj:IsA("Attachment") or obj:IsA("BodyAngularVelocity") then
+                obj:Destroy()
             end
+        end
+        root.AssemblyLinearVelocity = Vector3.zero
+    end
 
+    local function techGetTorso(accuracy)
+        local c = LocalPlayer.Character
+        if not c then return nil end
+        local root = c:FindFirstChild("HumanoidRootPart")
+        if not root then return nil end
+        local params = OverlapParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = { c }
+        local parts = workspace:GetPartBoundsInRadius(root.Position, accuracy + 30, params)
+        local target, dist = nil, 999
+        for _,part in pairs(parts) do
+            local model = part:FindFirstAncestorOfClass("Model")
+            if model and model:FindFirstChild("Humanoid") and model ~= c then
+                local torso = model:FindFirstChild("UpperTorso") or model:FindFirstChild("Torso") or model:FindFirstChild("HumanoidRootPart")
+                if torso then
+                    local d = (root.Position - torso.Position).Magnitude
+                    if d < dist then dist = d; target = torso end
+                end
+            end
+        end
+        return target
+    end
+
+    local function techApplyFlick(root, angle)
+        if root and root.Parent then root.CFrame = root.CFrame * CFrame.Angles(0, math.rad(angle), 0) end
+    end
+
+    local function techLockOn(root, torso, precision)
+        if not root or not root.Parent or not torso or not torso.Parent then return end
+        local look = CFrame.lookAt(root.Position, Vector3.new(torso.Position.X, root.Position.Y, torso.Position.Z))
+        root.CFrame = root.CFrame:Lerp(look, math.clamp(precision/100, 0, 1))
+    end
+
+    local function techWatch(body, done)
+        local conn
+        conn = RunService.Heartbeat:Connect(function()
+            local stop = body()
+            if stop then
+                if conn then conn:Disconnect() end
+                for i,c in ipairs(techConns) do if c == conn then table.remove(techConns, i) break end end
+                done()
+            end
+        end)
+        techConns[#techConns+1] = conn
+        return conn
+    end
+
+    local function techRun(def)
+        if techBusy or unloaded then return end
+        if not techToggle(def, "Enabled") then return end
+        local c = LocalPlayer.Character
+        local root = c and c:FindFirstChild("HumanoidRootPart")
+        local humanoid = c and c:FindFirstChildOfClass("Humanoid")
+        if not root or not humanoid then return end
+
+        local ping     = math.clamp(techNum(def,"Ping",0), 0, 2000)
+        local accuracy = techNum(def,"Accuracy",def.accuracy)
+        local cancel   = techNum(def,"Cancel",def.cancel)
+        local jumpPow  = techNum(def,"JumpPower",def.jump)
+        local autoJump = techToggle(def,"AutoJump")
+
+        techBusy = true
+        task.wait(0.38 + ping/1000)
+        if unloaded then techBusy = false; return end
+
+        local torso = techGetTorso(accuracy)
+        if not torso then techBusy = false; techClip(); return end
+
+        if def.mode == "meow" then
+            local model = torso:FindFirstAncestorOfClass("Model")
+            local anchor = (model and model:FindFirstChild("HumanoidRootPart")) or torso
+            techNoclip = true
+            humanoid.AutoRotate = false
+            techDashKey()
+            local st = tick()
+            techWatch(function()
+                return unloaded or not anchor.Parent or not root.Parent or (tick()-st >= 0.5)
+            end, function()
+                techBusy = false
+                techNoclip = false
+                if root.Parent then root.CFrame = CFrame.new(root.Position) end
+                techClip()
+            end)
+            return
         end
 
-    end)
+        if autoJump then
+            root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, jumpPow, root.AssemblyLinearVelocity.Z)
+        end
+        techFireDash()
+        humanoid.AutoRotate = false
 
-    PingBoxes[i]=pBox
+        local forward = (torso.Position - root.Position).Unit
+        local side = Vector3.new(-forward.Z, 0, forward.X)
+        local startT = tick()
+        local bav = Instance.new("BodyAngularVelocity")
+        bav.MaxTorque = Vector3.new(0,1000000,0); bav.P = 15000; bav.Parent = root
 
-end
+        local function cleanup()
+            if bav and bav.Parent then bav:Destroy() end
+            techBusy = false
+        end
 
-LoadConfig(1)
+        if def.mode == "v2" then
+            local flipped = false
+            techWatch(function()
+                if unloaded or not torso.Parent or not root.Parent then return true end
+                local elapsed = tick() - startT
+                if elapsed >= accuracy and not flipped then
+                    root.CFrame = root.CFrame * CFrame.Angles(0, math.pi, 0)
+                    flipped = true
+                end
+                local distXZ = (Vector2.new(root.Position.X, root.Position.Z) - Vector2.new(torso.Position.X, torso.Position.Z)).Magnitude
+                if elapsed > cancel and distXZ < 2.2 then techForceCancel(); return true end
+                if elapsed > 1.5 then techClip(); return true end
+                return false
+            end, cleanup)
+            return
+        end
 
--- theme panel
+        -- v1 and flick share spiral steering toward the torso
+        if def.mode == "flick" then
+            techApplyFlick(root, techNum(def,"F1",def.f1 or 0))
+            task.delay(0.04, function()
+                if not unloaded and root.Parent then techApplyFlick(root, techNum(def,"F2",def.f2 or 0)) end
+            end)
+            task.delay(0.08, function()
+                if not unloaded and root.Parent then techApplyFlick(root, techNum(def,"F3",def.f3 or 0)) end
+            end)
+        end
 
-local Themes={{Name='Halloween',C=Color3.fromRGB(200,80,0)},{Name='Crimson',C=Color3.fromRGB(180,20,20)},{Name='Cyber',C=Color3.fromRGB(20,40,160)},{Name='Neon',C=Color3.fromRGB(40,180,40)},{Name='Purple',C=Color3.fromRGB(120,30,160)}}
+        local useLock = def.lockOn and techToggle(def,"LockOn")
+        local lockPrecision = techNum(def,"LockPrecision",def.lockPrecision or 54)
 
-for _,th in ipairs(Themes) do
+        techWatch(function()
+            if unloaded or not torso.Parent or not root.Parent then return true end
+            local elapsed = tick() - startT
+            local tpos, rpos = torso.Position, root.Position
+            local angle = (elapsed/0.45) * (math.pi/1.5)
+            local radius = accuracy * (1 - math.clamp(elapsed/0.45,0,1))
+            local target = tpos + (side*math.cos(angle) + forward*math.sin(angle))*radius
+            local look = CFrame.lookAt(rpos, Vector3.new(target.X, rpos.Y, target.Z))
+            local rel = root.CFrame:Inverse() * look
+            local _,y,_ = rel:ToEulerAnglesXYZ()
+            if bav and bav.Parent then bav.AngularVelocity = Vector3.new(0, math.clamp(y*30,-200,200), 0) end
+            if useLock and elapsed > 0.1 then techLockOn(root, torso, lockPrecision) end
+            local distXZ = (Vector2.new(rpos.X, rpos.Z) - Vector2.new(tpos.X, tpos.Z)).Magnitude
+            if elapsed > cancel and distXZ < 2.2 then techForceCancel(); return true end
+            if elapsed > 1.5 then techClip(); return true end
+            return false
+        end, cleanup)
+    end
 
-    local tBtn=Instance.new('TextButton',ThemePanel); tBtn.Size=UDim2.new(0.92,0,0,26); tBtn.BackgroundColor3=th.C; tBtn.TextColor3=Color3.fromRGB(255,255,255); tBtn.Font=Enum.Font.GothamBold; tBtn.TextSize=11; tBtn.Text=th.Name; Instance.new('UICorner',tBtn).CornerRadius=UDim.new(0,5)
-
-    tBtn.MouseButton1Click:Connect(function() MainFrame.BackgroundColor3=th.C; MG.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,th.C),ColorSequenceKeypoint.new(1,th.C:Lerp(Color3.new(0,0,0),0.3))}) end)
-
-end
-
-GearBtn.MouseButton1Click:Connect(function() TogglePanel(SettingsPanel) end)
-
-CfgBtn.MouseButton1Click:Connect(function() TogglePanel(ConfigPanel) end)
-
-ThemeBtn.MouseButton1Click:Connect(function() TogglePanel(ThemePanel) end)
-
-CloseBtn.MouseButton1Click:Connect(function()
-
-    if tick()-ConfirmTime<=5 then ScreenGui:Destroy(); return end
-
-    ConfirmTime=tick(); game:GetService('StarterGui'):SetCore('SendNotification',{Text='Click - again to close Chill Tech',Title='Confirm',Duration=5})
-
-end)
-
-local DASH_ANIMS = { ['rbxassetid://10503381238']=true, ['rbxassetid://13379003796']=true }
-
-local function SetupCharacter(char)
-
-    if not IsCurrent() then return end
-
-    local Humanoid=char:WaitForChild('Humanoid'); char:WaitForChild('HumanoidRootPart')
-
-    local Animator=Humanoid:WaitForChild('Animator',5); if not Animator then return end
-
-    Animator.AnimationPlayed:Connect(function(Track)
-
-        if not IsCurrent() or not Enabled then return end
-
-        if DASH_ANIMS[Track.Animation.AnimationId] then ExecuteDash() end
-
-    end)
-
-end
-
-if LocalPlayer.Character then SetupCharacter(LocalPlayer.Character) end
-
-LocalPlayer.CharacterAdded:Connect(SetupCharacter)
-
-]=====]
-
-    ExternalBox:AddButton({ Text="Open Chill Tech Hub", Func=function()
-
-        local ok,err=pcall(function()
-
-            local chunk,compileErr=loadstring(CHILL_TECH_SOURCE)
-
-            if not chunk then error(compileErr) end
-
-            chunk()
-
+    -- Trigger automatically on the dash uppercut animation
+    local function techSetupChar(char)
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if not hum then return end
+        local animator = hum:FindFirstChildOfClass("Animator") or hum:WaitForChild("Animator",5)
+        if not animator then return end
+        connect(animator.AnimationPlayed, function(track)
+            if unloaded or techBusy then return end
+            local id = track.Animation and track.Animation.AnimationId
+            if not id or not DASH_ANIMS[id] then return end
+            for _,def in ipairs(TECH_DEFS) do
+                if techToggle(def,"Enabled") then techRun(def); return end
+            end
         end)
+    end
 
-        if ok then Library:Notify("Chill Tech loaded 🎃",4)
+    if LocalPlayer.Character then task.spawn(techSetupChar, LocalPlayer.Character) end
+    connect(LocalPlayer.CharacterAdded, function(char) task.spawn(techSetupChar, char) end)
 
-        else Library:Notify("Chill Tech failed: "..tostring(err),7); warn("[Macros] Chill Tech failed:",err) end
+    -- Manual keybind triggers for each tech
+    connect(UserInputService.InputBegan, function(input, processed)
+        if processed or unloaded then return end
+        if UserInputService:GetFocusedTextBox() then return end
+        for _,def in ipairs(TECH_DEFS) do
+            if inputMatchesBind(input, "Tech_"..def.key.."_Key") then
+                techRun(def)
+                return
+            end
+        end
+    end)
 
-    end })
-
-    ExternalBox:AddLabel({ Text="📋 = tech selector with per-config ping. 🎨 = theme.", DoesWrap=true })
+    -- Disable colliding parts while noclipping (same as the old suite)
+    connect(RunService.PreSimulation, function()
+        if not techNoclip or unloaded then return end
+        local c = LocalPlayer.Character
+        if not c then return end
+        for _,model in pairs(workspace:GetChildren()) do
+            if model:IsA("Model") and model ~= c and model:FindFirstChildOfClass("Humanoid") then
+                for _,part in pairs(model:GetDescendants()) do
+                    if part:IsA("BasePart") and part.CanCollide then part.CanCollide = false end
+                end
+            end
+        end
+    end)
 
     onCleanup(function()
-
-        pcall(function() _G.VuxLethalId=nil; local g=game:GetService("CoreGui"):FindFirstChild("VuxLoopDashGui"); if g then g:Destroy() end end)
-
+        techNoclip = false
+        techBusy = false
+        for _,conn in ipairs(techConns) do pcall(function() conn:Disconnect() end) end
+        table.clear(techConns)
     end)
 
     -- ============================================================
@@ -3462,6 +3091,32 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
         PING_MS        = 0,
 
     }
+
+    -- Read straight from the UI option at use time. Chillui's AddInput can
+
+    -- fire its callback while the box is still focused, so relying only on the
+
+    -- callback copy made the ping field look like it did nothing.
+
+    local function ldPing()
+
+        local v = tonumber(Options.LethalDash_PingDelay and Options.LethalDash_PingDelay.Value)
+
+        if v then LD.PING_MS = v end
+
+        return math.max(LD.PING_MS, 0)
+
+    end
+
+    local function ldSnap()
+
+        local v = tonumber(Options.LethalDash_SnapDuration and Options.LethalDash_SnapDuration.Value)
+
+        if v then LD.SNAP_DURATION = v / 100 end
+
+        return LD.SNAP_DURATION
+
+    end
 
     LethalBox:AddToggle("LethalDash_Enabled",     { Text="Lethal Dash",        Default=false })
 
@@ -3545,7 +3200,11 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
 
             task.delay(2,function() lethalSmooth=false end)
 
-            task.wait(LD.WAIT_TIME + LD.PING_MS/1000)
+            local ping = ldPing()
+
+            Library:Notify("Lethal Dash ping: "..tostring(ping).."ms", 2)
+
+            task.wait(LD.WAIT_TIME + ping/1000)
 
             if not Toggles.LethalDash_Enabled.Value then lethalBusy=false; return end
 
@@ -3561,11 +3220,11 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
 
             if target then
 
-                task.delay(0.2+LD.PING_MS/1000,function()
+                task.delay(0.2+ping/1000,function()
 
                     if not target or not target.Parent then return end
 
-                    local startT=tick(); local snapDur=LD.SNAP_DURATION; local conn
+                    local startT=tick(); local snapDur=ldSnap(); local conn
 
                     conn=RunService.RenderStepped:Connect(function()
 
@@ -4078,6 +3737,332 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
     if LocalPlayer.Character then task.spawn(setupMoveLockChar, LocalPlayer.Character) end
 
     connect(LocalPlayer.CharacterAdded, function(char) task.spawn(setupMoveLockChar, char) end)
+
+    -- ============================================================
+
+    -- INSTANT TWISTED  (keybind tech — pattern decoded from live capture)
+
+    -- 3 left clicks -> hold S -> Q dash -> fast camera twist (+80 / -140 / +50)
+
+    -- Never runs on its own: only fires when the Home-tab keybind is pressed.
+
+    -- ============================================================
+
+    local ITBox = addGroup(MacrosTab, "Left", "Instant Twisted", "tornado")
+
+    -- BindToRenderStep returns NOTHING (no connection object to :Disconnect()).
+    -- The ONLY way to stop it is UnbindFromRenderStep with the exact name.
+    -- We track active state ourselves and always unbind by name.
+    local itBusy = false
+    local itSpinActive = false
+    local IT_BIND_NAME = "ChillInstantTwisted"
+
+    ITBox:AddToggle("InstantTwisted_Enabled", { Text="Instant Twisted (keybind)", Default=false, Callback=function(v)
+        if not v then
+            pcall(function() RunService:UnbindFromRenderStep(IT_BIND_NAME) end)
+            itSpinActive = false
+            itBusy = false
+        end
+    end })
+
+    ITBox:AddToggle("InstantTwisted_DoCombo", { Text="Open With 3 Clicks", Default=true })
+
+    ITBox:AddInput("InstantTwisted_ClickGap", { Text="Click Gap (ms)", Default="550", Numeric=true, Finished=false, Placeholder="100-1200" })
+
+    ITBox:AddInput("InstantTwisted_SHold", { Text="S Hold Before Q (ms)", Default="350", Numeric=true, Finished=false, Placeholder="0-1000" })
+
+    ITBox:AddInput("InstantTwisted_SReleaseGap", { Text="Gap After S Release (ms)", Default="20", Numeric=true, Finished=false, Placeholder="0-200" })
+
+    ITBox:AddInput("InstantTwisted_PingDelay", { Text="Ping Delay (ms)", Default="20", Numeric=true, Finished=false, Placeholder="0-2000" })
+
+    ITBox:AddInput("InstantTwisted_DashHold", { Text="Q Hold (ms)", Default="150", Numeric=true, Finished=false, Placeholder="30-600" })
+
+    ITBox:AddInput("InstantTwisted_Flick1Angle", { Text="Flick 1 Angle (deg)", Default="78", Numeric=true, Finished=false, Placeholder="-720-720" })
+
+    ITBox:AddInput("InstantTwisted_Flick1Time", { Text="Flick 1 Time (ms)", Default="100", Numeric=true, Finished=false, Placeholder="16-1000" })
+
+    ITBox:AddInput("InstantTwisted_Flick2Angle", { Text="Flick 2 Angle (deg)", Default="-148", Numeric=true, Finished=false, Placeholder="-720-720" })
+
+    ITBox:AddInput("InstantTwisted_Flick2Time", { Text="Flick 2 Time (ms)", Default="100", Numeric=true, Finished=false, Placeholder="16-1000" })
+
+    ITBox:AddInput("InstantTwisted_Flick3Angle", { Text="Flick 3 Angle (deg)", Default="40", Numeric=true, Finished=false, Placeholder="-720-720" })
+
+    ITBox:AddInput("InstantTwisted_Flick3Time", { Text="Flick 3 Time (ms)", Default="60", Numeric=true, Finished=false, Placeholder="16-1000" })
+
+    ITBox:AddInput("InstantTwisted_FlickGap", { Text="Gap Between Flicks (ms)", Default="0", Numeric=true, Finished=false, Placeholder="0-500" })
+
+    ITBox:AddToggle("InstantTwisted_RestoreYaw", { Text="Return Camera To Start Yaw", Default=false })
+
+    ITBox:AddLabel({ Text="Angles captured live from 7 reps: +78deg / -148deg / +40deg. Flicks run DURING the dash. Keybind is in the Home tab (default B).", DoesWrap=true })
+
+    local function itNum(name, default)
+
+        local o = Options[name]
+
+        return tonumber(o and o.Value) or default
+
+    end
+
+    local function itStopSpin()
+
+        if itSpinActive then
+
+            pcall(function() RunService:UnbindFromRenderStep(IT_BIND_NAME) end)
+
+            itSpinActive = false
+
+        end
+
+    end
+
+    -- Blocking camera twist. The game rebuilds the camera CFrame from the mouse
+
+    -- every frame, so adding incremental rotations gets wiped instantly. Instead
+
+    -- we hold an absolute start yaw and force that yaw back every frame at
+
+    -- Camera+3 priority until the flick is finished.
+
+    local function itFlick(angleDeg, timeMs)
+
+        angleDeg = tonumber(angleDeg) or 0
+
+        if angleDeg == 0 then return end
+
+        local cam0 = workspace.CurrentCamera
+
+        if not cam0 then return end
+
+        local p0, y0, r0 = cam0.CFrame:ToEulerAnglesYXZ()
+
+        local span = math.rad(angleDeg)
+
+        local dur = math.max(tonumber(timeMs) or 100, 16) / 1000
+
+        local elapsed = 0
+
+        local finished = false
+
+        -- HARD FAILSAFE: no matter what happens, this bind removes itself after
+        -- at most (duration + 0.35s). It can NEVER pin the camera permanently.
+        local deadline = os.clock() + dur + 0.35
+
+        itStopSpin()
+
+        itSpinActive = true
+
+        local okBind, bindErr = pcall(function()
+
+            RunService:BindToRenderStep(IT_BIND_NAME, Enum.RenderPriority.Camera.Value + 3, function(dt)
+
+                local c = workspace.CurrentCamera
+
+                local stop = unloaded or not c or os.clock() > deadline
+
+                if not stop then
+                    elapsed += dt
+                    local a = math.clamp(elapsed / dur, 0, 1)
+
+                    -- smoothstep so the twist feels like a fast snap, not a linear crawl
+                    local e = a * a * (3 - 2 * a)
+
+                    pcall(function()
+                        c.CFrame = CFrame.fromEulerAnglesYXZ(p0, y0 + span * e, r0) + c.CFrame.Position
+                    end)
+
+                    if a >= 1 then stop = true end
+                end
+
+                if stop then
+                    finished = true
+                    -- SELF-UNBIND: even if the calling coroutine is killed or the
+                    -- script is re-executed, this bind can never lock the camera.
+                    pcall(function() RunService:UnbindFromRenderStep(IT_BIND_NAME) end)
+                    itSpinActive = false
+                end
+
+            end)
+
+        end)
+
+        if not okBind then
+            itSpinActive = false
+            warn("[Chillhub][InstantTwisted] bind failed: "..tostring(bindErr))
+            return
+        end
+
+        local guard = os.clock() + dur + 1
+
+        while not finished and os.clock() < guard and not unloaded do
+
+            RunService.Heartbeat:Wait()
+
+        end
+
+        -- ALWAYS unbind by name — this is the only thing that actually works.
+        pcall(function() RunService:UnbindFromRenderStep(IT_BIND_NAME) end)
+        itSpinActive = false
+
+    end
+
+    local function itRunFlicks()
+
+        local gap = math.max(itNum("InstantTwisted_FlickGap", 0), 0) / 1000
+
+        itFlick(itNum("InstantTwisted_Flick1Angle", 78), itNum("InstantTwisted_Flick1Time", 100))
+
+        if gap > 0 then task.wait(gap) end
+
+        itFlick(itNum("InstantTwisted_Flick2Angle", -148), itNum("InstantTwisted_Flick2Time", 100))
+
+        if gap > 0 then task.wait(gap) end
+
+        itFlick(itNum("InstantTwisted_Flick3Angle", 40), itNum("InstantTwisted_Flick3Time", 60))
+
+    end
+
+    local function itRun()
+
+        if itBusy then return end
+
+        if not Toggles.InstantTwisted_Enabled or not Toggles.InstantTwisted_Enabled.Value then return end
+
+        local hum = getHumanoid()
+
+        if not hum or hum.Health <= 0 or isRagdolled(hum) then return end
+
+        itBusy = true
+
+        task.spawn(function()
+
+            local startCF = workspace.CurrentCamera and workspace.CurrentCamera.CFrame or nil
+
+            local ok, err = pcall(function()
+
+                itStopSpin()
+
+                if Toggles.InstantTwisted_DoCombo and Toggles.InstantTwisted_DoCombo.Value then
+
+                    local clickGap = math.max(itNum("InstantTwisted_ClickGap", 550), 50) / 1000
+
+                    for _ = 1, 3 do
+
+                        clickMouse()
+
+                        task.wait(clickGap)
+
+                    end
+
+                end
+
+                keyDown(Enum.KeyCode.S)
+
+                task.wait(math.max(itNum("InstantTwisted_SHold", 350), 0) / 1000)
+
+                keyUp(Enum.KeyCode.S)
+
+                task.wait(math.max(itNum("InstantTwisted_SReleaseGap", 20), 0) / 1000)
+
+                local ping = math.max(itNum("InstantTwisted_PingDelay", 20), 0) / 1000
+
+                if ping > 0 then task.wait(ping) end
+
+                keyDown(Enum.KeyCode.Q)
+
+                -- The twist must happen DURING the dash, not after it. In the
+                -- capture the first flick starts 20-70ms after Q goes down.
+                -- Run flicks concurrently so the camera is already turning
+                -- while the dash is still active — otherwise you ram straight
+                -- into the player before the camera ever moves.
+                local flicksDone = false
+
+                task.spawn(function()
+
+                    pcall(itRunFlicks)
+
+                    flicksDone = true
+
+                end)
+
+                task.wait(math.max(itNum("InstantTwisted_DashHold", 150), 30) / 1000)
+
+                keyUp(Enum.KeyCode.Q)
+
+                -- wait for the flicks to finish before doing anything else
+                local fwait = os.clock() + 2
+                while not flicksDone and os.clock() < fwait and not unloaded do
+
+                    task.wait()
+
+                end
+
+                task.wait(0.05)
+
+                if Toggles.InstantTwisted_RestoreYaw and Toggles.InstantTwisted_RestoreYaw.Value and startCF then
+
+                    local cam = workspace.CurrentCamera
+
+                    if cam then
+
+                        local p, _, r = cam.CFrame:ToEulerAnglesYXZ()
+
+                        local _, sy = startCF:ToEulerAnglesYXZ()
+
+                        cam.CFrame = CFrame.fromEulerAnglesYXZ(p, sy, r) + cam.CFrame.Position
+
+                    end
+
+                end
+
+            end)
+
+            if not ok then warn("[Chillhub][InstantTwisted] "..tostring(err)) end
+
+            itStopSpin()
+
+            keyUp(Enum.KeyCode.S)
+
+            keyUp(Enum.KeyCode.Q)
+
+            itBusy = false
+
+        end)
+
+    end
+
+    ITBox:AddButton({ Text="Test Flicks Only", Func=function()
+
+        if itBusy then return end
+
+        itBusy = true
+
+        task.spawn(function()
+
+            pcall(itRunFlicks)
+
+            itStopSpin()
+
+            itBusy = false
+
+        end)
+
+    end })
+
+    connect(UserInputService.InputBegan, function(input, processed)
+
+        if processed or UserInputService:GetFocusedTextBox() then return end
+
+        if inputMatchesBind(input, "InstantTwisted_Key") then itRun() end
+
+    end)
+
+    onCleanup(function()
+        pcall(function() RunService:UnbindFromRenderStep(IT_BIND_NAME) end)
+        itSpinActive = false
+        itBusy = false
+        keyUp(Enum.KeyCode.S)
+        keyUp(Enum.KeyCode.Q)
+    end)
 
 end
 
@@ -5236,6 +5221,10 @@ do
             "FlingAura_Enabled","LethalDash_Enabled","TouchFling_Enabled","V3_AntiHit","V3_Invisible","V3_SniperEnabled",
 
             "TwinFangs_VoidEnabled",
+
+            "InstantTwisted_Enabled",
+
+            "Tech_V1_Enabled","Tech_Dripzdash_Enabled","Tech_Tornado_Enabled","Tech_Meow_Enabled",
 
             "Macro_Backdash1_Enabled","Macro_Backdash2_Enabled","Macro_Backdash3_Enabled","Macro_Backdash4_Enabled",
 
