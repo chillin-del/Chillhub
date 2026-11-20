@@ -1,16 +1,13 @@
-
-
 ------------------------------------------------------------
 
 -- EDIT ME
+-- Chillhub v9 — ported to Chillui (Obsidian addons removed)
 
 ------------------------------------------------------------
 
 local UPDATE_VERSION = "9"
 
-local UPDATE_NOTES   = "V3 Update 9 features ported — Obsidian UI retained"
-
-
+local UPDATE_NOTES   = "V3 Update 9 features ported — Chillui UI"
 
 ------------------------------------------------------------
 
@@ -40,8 +37,6 @@ local StarterGui          = game:GetService("StarterGui")
 
 local ContextActionService= game:GetService("ContextActionService")
 
-
-
 local LocalPlayer   = Players.LocalPlayer
 
 local LOGO_ASSET_ID = "rbxassetid://83288538700579"
@@ -50,31 +45,24 @@ local ACCENT        = Color3.fromRGB(255, 100, 0)
 
 local SITE_URL      = "https://chillhuboffical.netlify.app/"
 
+------------------------------------------------------------
 
+-- LOAD UI LIBRARY
 
 ------------------------------------------------------------
 
--- LOAD UI LIBRARY + ADDONS
-
-------------------------------------------------------------
-
-local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
-
-local okLib, Library = pcall(function() return loadstring(game:HttpGet(repo.."Library.lua"))() end)
-
+-- The UI library lives on GitHub as "ChillHubUI.lua" (a copy of Chillui.lua).
+-- Chillui shows its own Normal / Lite splash when the window is created.
+local repo = "https://raw.githubusercontent.com/chillin-del/Chillhub/main/"
+local okLib, Library = pcall(function() return loadstring(game:HttpGet(repo.."ChillHubUI.lua"))() end)
 if not okLib or not Library then error("[Chillhub] failed to load UI library: "..tostring(Library)) end
 
-local okTheme, ThemeManager = pcall(function() return loadstring(game:HttpGet(repo.."addons/ThemeManager.lua"))() end)
-
-local okSave,  SaveManager  = pcall(function() return loadstring(game:HttpGet(repo.."addons/SaveManager.lua"))()  end)
-
-
-
 local Options = Library.Options
-
 local Toggles = Library.Toggles
 
--- V3 Update 9 feature state (kept separate from the Obsidian UI controls).
+-- ThemeManager / SaveManager are built into Chillui; no Obsidian addons are loaded.
+
+-- V3 Update 9 feature state (kept separate from the Chillui UI controls).
 local V3 = {
     Render = { Trees=true, Rocks=true, Props=true, Clutter=true, Effects=true, Lights=true, Decals=true, Terrain=true, Sky=true },
     Sniper = { Enabled=false, ShowFOV=true, Color=ACCENT, Radius=160, Smooth=70, Part="Head", ScopedOnly=true, LineOfSight=true, AutoShoot=false, Delay=250 },
@@ -82,37 +70,13 @@ local V3 = {
     Invisible = false,
 }
 
+------------------------------------------------------------
 
+-- LOADING (CHILLUI SPLASH)
 
 ------------------------------------------------------------
 
--- LOADING SCREEN
-
-------------------------------------------------------------
-
-local Loading = Library:CreateLoading({ Title="Chillhub", Icon=LOGO_ASSET_ID, TotalSteps=4 })
-
-task.delay(90, function() pcall(function() Loading:Destroy() end) end)
-
-Loading:SetMessage("Loading Chillhub")
-
-Loading:SetDescription("i love you"); task.wait(1.5)
-
-Loading:SetCurrentStep(1); Loading:SetDescription("Loading ya save fileeee"); task.wait(1.5)
-
-Loading:SetCurrentStep(2); Loading:ShowSidebarPage(true)
-
-Loading.Sidebar:AddLabel("User: "..LocalPlayer.Name)
-
-Loading.Sidebar:AddLabel("Update "..(UPDATE_VERSION ~= "" and UPDATE_VERSION or "___")); task.wait(1.5)
-
-Loading:SetCurrentStep(3); Loading:SetDescription("Ready!"); task.wait(1.5)
-
-
-
-pcall(function() Library.AccentColor = Color3.fromRGB(255, 100, 0) end)
-
-
+-- Chillui shows its own splash/menu, so there is no separate loading screen to drive.
 
 ------------------------------------------------------------
 
@@ -126,8 +90,6 @@ local connections  = {}
 
 local cleanupFns   = {}
 
-
-
 local function connect(signal, fn) local c=signal:Connect(fn); table.insert(connections,c); return c end
 
 local function onCleanup(fn) table.insert(cleanupFns, fn) end
@@ -136,13 +98,9 @@ local function getHumanoid() local c=LocalPlayer.Character; return c and c:FindF
 
 local function getRoot()     local c=LocalPlayer.Character; return c and c:FindFirstChild("HumanoidRootPart") end
 
-
-
 -- waitMs: needed by macro helpers
 
 local function waitMs(ms) task.wait(ms / 1000) end
-
-
 
 local function isRagdolled(humanoid)
 
@@ -162,11 +120,7 @@ local function isRagdolled(humanoid)
 
 end
 
-
-
 local Shared = { flinging=false, restoreNoclip=function() end, setTrackerVisible=function(_v) end, renderRestore=function() end }
-
-
 
 -- autoRotateLocks: only used by spin/attach — NOT by lock-on (that was the ragdoll bug)
 
@@ -190,8 +144,6 @@ connect(LocalPlayer.CharacterAdded, function(char)
 
 end)
 
-
-
 local function resolvePlayer(v)
 
     if typeof(v) == "Instance" then return v end
@@ -201,8 +153,6 @@ local function resolvePlayer(v)
     return nil
 
 end
-
-
 
 local function playerLabel(plr)
 
@@ -214,39 +164,22 @@ local function playerLabel(plr)
 
 end
 
-
-
+-- Chillui's KeyPicker stores the bound key string in `.Key` (`.Value` holds toggle state).
 local function keyFromOption(name)
-
     local opt = Options[name]; if not opt then return nil end
-
-    return Enum.KeyCode:FromName(tostring(opt.Value))
-
+    return Enum.KeyCode:FromName(tostring(opt.Key or opt.Value))
 end
-
-
 
 local function inputMatchesBind(input, name)
-
     local opt = Options[name]; if not opt then return false end
-
-    local v = tostring(opt.Value)
-
+    local v = tostring(opt.Key or opt.Value)
     if v == "None" then return false end
-
     if v == "MB1" then return input.UserInputType == Enum.UserInputType.MouseButton1 end
-
     if v == "MB2" then return input.UserInputType == Enum.UserInputType.MouseButton2 end
-
     if v == "MB3" then return input.UserInputType == Enum.UserInputType.MouseButton3 end
-
     local kc = Enum.KeyCode:FromName(v)
-
     return kc ~= nil and input.KeyCode == kc
-
 end
-
-
 
 local function fireKey(kc) VirtualInputManager:SendKeyEvent(true,kc,false,game); task.wait(); VirtualInputManager:SendKeyEvent(false,kc,false,game) end
 
@@ -260,8 +193,6 @@ local function clickUp()    VirtualInputManager:SendMouseButtonEvent(0,0,0,false
 
 local function clickMouse() clickDown(); task.wait(); clickUp() end
 
-
-
 local function copy(text)
 
     if type(setclipboard) == "function" then setclipboard(text); return true end
@@ -269,8 +200,6 @@ local function copy(text)
     return false
 
 end
-
-
 
 local function addGroup(tab, side, name, icon)
 
@@ -287,8 +216,6 @@ local function addGroup(tab, side, name, icon)
     return tab:AddRightGroupbox(name, icon)
 
 end
-
-
 
 local function makeDraggable(frame, moveTarget)
 
@@ -326,8 +253,6 @@ local function makeDraggable(frame, moveTarget)
 
 end
 
-
-
 ------------------------------------------------------------
 
 -- BUILD UI
@@ -339,8 +264,6 @@ end
 -- Macros animation hook can both use it.
 
 local twinFangsVoidActive = false
-
-
 
 -- How long we pin everyone down in the void. Driven by the slider, with a
 
@@ -357,8 +280,6 @@ local function twinFangsVoidHoldTime()
     return v or TWIN_FANGS_HOLD_DEFAULT
 
 end
-
-
 
 -- Collect every alive player (no radius — Twin Fangs hits everyone).
 
@@ -392,8 +313,6 @@ local function twinFangsCollectTargets(origin)
 
 end
 
-
-
 -- Drop everyone into the void: pop them just above the kill plane and shove
 
 -- them straight down so they actually fall through it. If the game tries to
@@ -416,8 +335,6 @@ local function twinFangsSendToVoid(list, duration)
 
     duration = duration or twinFangsVoidHoldTime()
 
-
-
     for i, t in ipairs(list) do
 
         local hrp = t.hrp
@@ -438,8 +355,6 @@ local function twinFangsSendToVoid(list, duration)
 
     if #held == 0 then return end
 
-
-
     -- first shove: line them up over the void and push them down
 
     for _, h in ipairs(held) do
@@ -459,8 +374,6 @@ local function twinFangsSendToVoid(list, duration)
         end
 
     end
-
-
 
     task.spawn(function()
 
@@ -506,8 +419,6 @@ local function twinFangsSendToVoid(list, duration)
 
 end
 
-
-
 -- Ride down to just above the death zone with the targets, holding there while
 
 -- they drop, then glide back out. Safety net: we're anchored the whole time,
@@ -530,8 +441,6 @@ local function twinFangsVoidDive(originCF, holdTime)
 
         if not root or not hum or hum.Health <= 0 or not originCF then return end
 
-
-
         local diveRoot    = root
 
         local diveHum     = hum
@@ -549,8 +458,6 @@ local function twinFangsVoidDive(originCF, holdTime)
         local done        = false
 
         local watchdog
-
-
 
         local function restore()
 
@@ -592,8 +499,6 @@ local function twinFangsVoidDive(originCF, holdTime)
 
         end
 
-
-
         local function holdAt(pos)
 
             if done then return false end
@@ -616,13 +521,9 @@ local function twinFangsVoidDive(originCF, holdTime)
 
         end
 
-
-
         -- smooth fast drop
 
         if not holdAt(startPos) then return end
-
-
 
         watchdog = RunService.Heartbeat:Connect(function()
 
@@ -646,8 +547,6 @@ local function twinFangsVoidDive(originCF, holdTime)
 
         end)
 
-
-
         local t0 = os.clock()
 
         while not done do
@@ -664,13 +563,9 @@ local function twinFangsVoidDive(originCF, holdTime)
 
         end
 
-
-
         task.delay(holdTime + 1.5, restore) -- fail-safe
 
         task.wait(holdTime)                 -- stay down the whole hold window
-
-
 
         -- smooth climb back
 
@@ -690,15 +585,11 @@ local function twinFangsVoidDive(originCF, holdTime)
 
         end
 
-
-
         restore()
 
     end)
 
 end
-
-
 
 -- Glue ourselves onto the target's back, facing their back, so the swing
 
@@ -711,8 +602,6 @@ local function twinFangsAttachBack(hrp)
     if not root or not hrp or not hrp.Parent then return false end
 
     local tp = hrp.Position
-
-
 
     local look = hrp.CFrame.LookVector
 
@@ -728,8 +617,6 @@ local function twinFangsAttachBack(hrp)
 
     flat = flat.Unit
 
-
-
     -- 2.2 studs behind their back, same height, facing them
 
     local pos = Vector3.new(tp.X, tp.Y, tp.Z) - flat * 2.2
@@ -741,8 +628,6 @@ local function twinFangsAttachBack(hrp)
     return true
 
 end
-
-
 
 -- Stay stuck to their back for the whole slash window.
 
@@ -762,8 +647,6 @@ local function twinFangsHoldBack(hrp, seconds)
 
 end
 
-
-
 -- Slash by slash: stick to each target's back while the swing plays, then once
 
 -- the animation is fully done, drag everyone to the edge of the death zone.
@@ -776,8 +659,6 @@ local function runTwinFangsVoidKill(track)
 
     _G.ChillTwinFangsRunning = true
 
-
-
     task.spawn(function()
 
         local ok, err = pcall(function()
@@ -786,39 +667,27 @@ local function runTwinFangsVoidKill(track)
 
             if not root then return end
 
-
-
             waitMs(60) -- let the swing begin
 
             if not twinFangsVoidActive then return end
-
-
 
             root = getRoot()
 
             if not root then return end
 
-
-
             local targets = twinFangsCollectTargets(root.Position)
 
             if #targets == 0 then return end
 
-
-
             local slashes = math.max(#targets, 3)
 
             local step    = 0.3 -- one back-attach every 0.3s
-
-
 
             for i = 1, slashes do
 
                 if not twinFangsVoidActive then return end
 
                 if track and not track.IsPlaying then break end
-
-
 
                 local t = targets[((i - 1) % #targets) + 1]
 
@@ -834,8 +703,6 @@ local function runTwinFangsVoidKill(track)
 
             end
 
-
-
             -- let the animation finish completely before the void teleport
 
             if track then
@@ -850,17 +717,11 @@ local function runTwinFangsVoidKill(track)
 
             end
 
-
-
             if not twinFangsVoidActive then return end
-
-
 
             root = getRoot()
 
             if not root then return end
-
-
 
             -- everyone still alive in the attack goes to the lip of the void;
 
@@ -869,8 +730,6 @@ local function runTwinFangsVoidKill(track)
             local finalTargets = twinFangsCollectTargets(root.Position)
 
             if #finalTargets == 0 then return end
-
-
 
             local holdTime = twinFangsVoidHoldTime()
 
@@ -881,8 +740,6 @@ local function runTwinFangsVoidKill(track)
             twinFangsSendToVoid(finalTargets, holdTime + 1.5)
 
             twinFangsVoidDive(root.CFrame, holdTime)
-
-
 
             waitMs((holdTime + 0.8) * 1000)
 
@@ -896,8 +753,6 @@ local function runTwinFangsVoidKill(track)
 
 end
 
-
-
 ------------------------------------------------------------
 
 -- LOCAL COSMETICS (Korblox / Headless) — script scope so the
@@ -909,8 +764,6 @@ end
 local KORBLOX_MESH    = "rbxassetid://119249943"
 
 local KORBLOX_TEXTURE = "rbxassetid://129458735"
-
-
 
 local function applyKorblox(char)
 
@@ -942,8 +795,6 @@ local function applyKorblox(char)
 
 end
 
-
-
 local function removeKorblox(char)
 
     if not char then return end
@@ -960,11 +811,7 @@ local function removeKorblox(char)
 
 end
 
-
-
 local headlessSaved = {}
-
-
 
 local function hideForHeadless(inst, saved)
 
@@ -979,8 +826,6 @@ local function hideForHeadless(inst, saved)
     inst.Transparency = 1
 
 end
-
-
 
 local function applyHeadless(char)
 
@@ -1024,8 +869,6 @@ local function applyHeadless(char)
 
 end
 
-
-
 local function removeHeadless(char)
 
     if not char then return end
@@ -1044,8 +887,6 @@ local function removeHeadless(char)
 
 end
 
-
-
 local function refreshCosmetics()
 
     local char = LocalPlayer.Character
@@ -1055,8 +896,6 @@ local function refreshCosmetics()
     if Toggles.Appearance_Headless and Toggles.Appearance_Headless.Value then applyHeadless(char) else removeHeadless(char) end
 
 end
-
-
 
 connect(LocalPlayer.CharacterAdded, function(char)
 
@@ -1068,29 +907,13 @@ connect(LocalPlayer.CharacterAdded, function(char)
 
 end)
 
-
-
 local function buildUI()
 
-
-
 local Window = Library:CreateWindow({
-
-    Title         = "Chillhub TSB 🎃",
-
-    Footer        = "by ilovemygfhehe123",
-
-    ToggleKeybind = Enum.KeyCode.P,
-
-    Center        = true,
-
-    AutoShow      = true,
-
-    Icon          = LOGO_ASSET_ID,
-
+    Title  = "Chillhub TSB 🎃",
+    Footer = "by ilovemygfhehe123",
+    NotifySide = "Right",
 })
-
-
 
 local _menuLast = 0
 
@@ -1100,23 +923,10 @@ Library.ToggleCallback = function()
 
 end
 
-
-
-pcall(function()
-
-    if okTheme and ThemeManager then
-
-        ThemeManager:SetLibrary(Library)
-
-        ThemeManager:ApplyTheme("Tokyo Night")
-
-        Library.AccentColor = Color3.fromRGB(255, 100, 0)
-
-    end
-
-end)
-
-
+-- Chillui menu key + appearance (replaces the Obsidian ThemeManager call).
+Library.Config.MenuKey = "P"
+pcall(function() Library:SetTheme("Midnight") end)
+pcall(function() Library:SetAccent(Color3.fromRGB(255, 100, 0)) end)
 
 local HomeTab      = Window:AddTab("Home",            "home")
 
@@ -1137,8 +947,6 @@ local LoaderTab    = Window:AddTab("Loader",          "download")
 local QoLTab       = Window:AddTab("Quality of Life", "sparkles")
 
 local SettingsTab  = Window:AddTab("Settings",        "settings")
-
-
 
 ------------------------------------------------------------
 
@@ -1168,23 +976,17 @@ do
 
     end })
 
-
-
     local UpdateBox = addGroup(HomeTab, "Left", "Update "..(UPDATE_VERSION~="" and UPDATE_VERSION or "___"), "megaphone")
 
     UpdateBox:AddLabel({ Text=UPDATE_NOTES~="" and UPDATE_NOTES or "Update notes go here.", DoesWrap=true })
 
-
-
     local KeysBox = addGroup(HomeTab, "Right", "Default Keybinds", "keyboard")
 
     local function addKeybind(label, id, default)
-
-        KeysBox:AddLabel(label):AddKeyPicker(id, { Default=default, NoUI=true, Mode="Toggle", Text=label })
-
+        KeysBox:AddKeyPicker(id, { Default=default, NoUI=true, Mode="Toggle", Text=label })
     end
 
-    KeysBox:AddLabel("Open / Close Menu"):AddKeyPicker("MenuKeybind", { Default="P", NoUI=true, Text="Open / Close Menu" })
+    KeysBox:AddKeyPicker("MenuKeybind", { Default=Library.Config.MenuKey or "P", NoUI=true, Text="Open / Close Menu", ChangedCallback=function(key) Library.Config.MenuKey=key end })
 
     Library.ToggleKeybind = Options.MenuKeybind
 
@@ -1205,8 +1007,6 @@ do
     addKeybind("Game Dash Key (Faster Dashes)",  "Keybind_GameDash",  "Q")
 
     addKeybind("Lock-On (toggle)",               "LockOn_Key",        "T")
-
-
 
     local RejoinBox = addGroup(HomeTab, "Right", "Rejoin", "refresh-cw")
 
@@ -1245,8 +1045,6 @@ do
     end)
 
 end
-
-
 
 ------------------------------------------------------------
 
@@ -1335,8 +1133,6 @@ Callback=function(v) v=tonumber(v) or 16; for _,e in entries do e.label.TextSize
         end
 
     end)
-
-
 
     -- Performance
 
@@ -1458,8 +1254,6 @@ Callback=function(v) v=tonumber(v) or 16; for _,e in entries do e.label.TextSize
 
     end)
 
-
-
     -- Extreme Low Quality
 
     local ExtremeBox = addGroup(VisualsTab, "Left", "Extreme Low Quality", "zap")
@@ -1475,8 +1269,6 @@ Callback=function(v) v=tonumber(v) or 16; for _,e in entries do e.label.TextSize
         forceGrey=true
 
         greyHold.extreme=true
-
-
 
         applyGreySky()
 
@@ -1494,8 +1286,6 @@ Callback=function(v) v=tonumber(v) or 16; for _,e in entries do e.label.TextSize
 
         Lighting.FogEnd=100000
 
-
-
         for _,child in Lighting:GetChildren() do
 
             if child:IsA("PostEffect") or child:IsA("Atmosphere") then
@@ -1505,8 +1295,6 @@ Callback=function(v) v=tonumber(v) or 16; for _,e in entries do e.label.TextSize
             end
 
         end
-
-
 
         pcall(function()
 
@@ -1523,8 +1311,6 @@ Callback=function(v) v=tonumber(v) or 16; for _,e in entries do e.label.TextSize
             end
 
         end)
-
-
 
         local count=0
 
@@ -1697,8 +1483,6 @@ Callback=function(v) v=tonumber(v) or 16; for _,e in entries do e.label.TextSize
         Library:Notify("Applying Massive FPS Boost, this may freeze for a second...",4); task.spawn(applyMassiveBoost)
 
     end })
-
-
 
     -- V3 Update 9: World Rendering (individual category toggles)
    local WorldBox = addGroup(VisualsTab, "Left", "World Rendering", "globe")
@@ -1894,11 +1678,7 @@ Callback=function(v) v=tonumber(v) or 16; for _,e in entries do e.label.TextSize
 
     ESPBox:AddInput("ESP_Skeleton_Thick", { Text="Skeleton Thickness", Default="2", Numeric=true, Finished=false, Placeholder="1-6" })
 
-
-
     local espHL={}; local infoBB={}; local skelBB={}
-
-
 
     -- bone pairs: {partA, partB} — covers R6 and R15 names
 
@@ -1934,15 +1714,11 @@ Callback=function(v) v=tonumber(v) or 16; for _,e in entries do e.label.TextSize
 
     }
 
-
-
     local function removeHL(plr)   local h=espHL[plr];  if h then h:Destroy();     espHL[plr]=nil  end end
 
     local function removeInfo(plr) local b=infoBB[plr]; if b then b.gui:Destroy(); infoBB[plr]=nil end end
 
     local function removeSkel(plr) local s=skelBB[plr]; if s then s:Destroy(); skelBB[plr]=nil end end
-
-
 
     local function updateHL(plr)
 
@@ -1975,8 +1751,6 @@ Callback=function(v) v=tonumber(v) or 16; for _,e in entries do e.label.TextSize
         h.OutlineColor=oc; h.OutlineTransparency=Toggles.ESP_Outline_Enabled.Value and 0 or 1
 
     end
-
-
 
     local function updateInfo(plr)
 
@@ -2012,8 +1786,6 @@ Callback=function(v) v=tonumber(v) or 16; for _,e in entries do e.label.TextSize
 
     end
 
-
-
     -- Skeleton ESP: screen-space lines between bones, drawn every frame.
 
     -- WorldToScreenPoint already subtracts the GUI inset, so the ScreenGui must
@@ -2030,15 +1802,11 @@ Callback=function(v) v=tonumber(v) or 16; for _,e in entries do e.label.TextSize
 
     onCleanup(function() skelGui:Destroy() end)
 
-
-
     local lineLayer = Instance.new("Frame")
 
     lineLayer.Name="SkeletonLines"; lineLayer.Size=UDim2.fromScale(1,1)
 
     lineLayer.BackgroundTransparency=1; lineLayer.ClipsDescendants=true; lineLayer.Parent=skelGui
-
-
 
     -- pool of line frames so we don't create/destroy every frame
 
@@ -2068,8 +1836,6 @@ Callback=function(v) v=tonumber(v) or 16; for _,e in entries do e.label.TextSize
 
     end
 
-
-
     local function worldToScreen(pos)
 
         local cam=workspace.CurrentCamera; if not cam then return nil end
@@ -2081,8 +1847,6 @@ Callback=function(v) v=tonumber(v) or 16; for _,e in entries do e.label.TextSize
         return Vector2.new(sp.X,sp.Y), onScreen
 
     end
-
-
 
     local function drawLine(a2,b2,col,thick)
 
@@ -2103,8 +1867,6 @@ Callback=function(v) v=tonumber(v) or 16; for _,e in entries do e.label.TextSize
         line.BackgroundTransparency=0
 
     end
-
-
 
     connect(RunService.RenderStepped,function()
 
@@ -2153,8 +1915,6 @@ Callback=function(v) v=tonumber(v) or 16; for _,e in entries do e.label.TextSize
         for i=lineCount+1,#linePool do linePool[i].Visible=false end
 
     end)
-
-
 
     local function hookPlayer(plr)
 
@@ -2234,8 +1994,6 @@ Callback=function(v) v=tonumber(v) or 16; for _,e in entries do e.label.TextSize
 
     onCleanup(function() for p in espHL do removeHL(p) end; for p in infoBB do removeInfo(p) end end)
 
-
-
     -- Cosmetics (local visuals only)
 
     local CosBox = addGroup(VisualsTab, "Right", "Cosmetics", "user")
@@ -2245,8 +2003,6 @@ Callback=function(v) v=tonumber(v) or 16; for _,e in entries do e.label.TextSize
     CosBox:AddToggle("Appearance_Headless", { Text="Headless",    Default=false, Callback=function() refreshCosmetics() end })
 
     CosBox:AddLabel({ Text="Local only — other players don't see these.", DoesWrap=true })
-
-
 
     -- World & Camera
 
@@ -2292,8 +2048,6 @@ Callback=function(v) v=tonumber(v) or 16; for _,e in entries do e.label.TextSize
 
 end
 
-
-
 ------------------------------------------------------------
 
 -- COMBAT TAB
@@ -2319,8 +2073,6 @@ do
 SafeBox:AddToggle("Combat_Safezone_Walls",       { Text="Edge Walls",        Default=true })
 
     SafeBox:AddInput("Combat_Safezone_ReturnTime",  { Text="Auto Return After (s, 0=stay)", Default="0", Numeric=true, Finished=false, Placeholder="0-120" })
-
-
 
     local PLAT_THICK=4; local WALL_H=60; local safezone=nil; local lastHealth=nil; local healthConn=nil
 
@@ -2434,8 +2186,6 @@ SafeBox:AddToggle("Combat_Safezone_Walls",       { Text="Edge Walls",        Def
 
     onCleanup(function() if healthConn then healthConn:Disconnect() end; destroySafezone() end)
 
-
-
     -- Faster Dashes
 
     local DashBox = addGroup(CombatTab, "Left", "Faster Dashes", "move-horizontal")
@@ -2451,8 +2201,6 @@ SafeBox:AddToggle("Combat_Safezone_Walls",       { Text="Edge Walls",        Def
     DashBox:AddInput("Dash_Duration",  { Text="Boost Duration (ms)",   Default="250", Numeric=true, Finished=false, Placeholder="50-2000" })
 
     DashBox:AddToggle("Dash_Tracker",  { Text="Dash Cooldown Tracker (drag)", Default=false, Callback=function(v) Shared.setTrackerVisible(v) end })
-
-
 
     local SIDE_CD=2; local FB_CD=5; local cooldowns={side=0,frontBack=0}; local dashing=nil
 
@@ -2538,8 +2286,6 @@ SafeBox:AddToggle("Combat_Safezone_Walls",       { Text="Edge Walls",        Def
 
     end)
 
-
-
     -- Twin Fangs Void Kill (in Combat tab for easy toggling)
 
     local TFBox = addGroup(CombatTab,"Left","Twin Fangs Void Kill","zap")
@@ -2553,8 +2299,6 @@ SafeBox:AddToggle("Combat_Safezone_Walls",       { Text="Edge Walls",        Def
     TFBox:AddInput("TwinFangs_Hold", { Text="Void Hold (s)", Default="2", Numeric=true, Finished=false, Placeholder="0.5-5" })
 
     TFBox:AddLabel({ Text="When on: every slash sticks you to the target's back, and once the animation finishes everyone in the attack is dropped straight through the death zone — you hover just above it for the Void Hold time and get pulled back out safely.", DoesWrap=true })
-
-
 
     -- ----------------------------------------------------------------
 
@@ -2653,8 +2397,6 @@ SafeBox:AddToggle("Combat_Safezone_Walls",       { Text="Edge Walls",        Def
     LockBox:AddInput("LockOn_Predict",  { Text="Prediction (%)", Default="100", Numeric=true, Finished=false, Placeholder="0-200" })
 
     LockBox:AddToggle("LockOn_Marker",   { Text="Show Target UI Bracket", Default=true }):AddColorPicker("LockOn_BracketColor",{ Default=Color3.fromRGB(255,255,255), Title="Bracket Color" })
-
-
 
     local function targetTorsoInfo(plr)
 
@@ -2850,8 +2592,6 @@ SafeBox:AddToggle("Combat_Safezone_Walls",       { Text="Edge Walls",        Def
 
 end
 
-
-
 ------------------------------------------------------------
 
 -- FLING TAB
@@ -3007,8 +2747,6 @@ do
 
 end
 
-
-
 ------------------------------------------------------------
 
 -- MACROS TAB
@@ -3027,8 +2765,6 @@ do
 
     local ExternalBox = addGroup(MacrosTab,"Left","External Scripts (Tech Suite)","download")
 
-
-
     -- NOTE: This string is loaded via loadstring() so it runs as its own
 
     -- environment. All TSB services are re-acquired inside it.
@@ -3045,15 +2781,11 @@ local VirtualInputManager = game:GetService('VirtualInputManager')
 
 local LocalPlayer       = Players.LocalPlayer
 
-
-
 local ScriptId = math.random(1,1000000)
 
 _G.VuxLethalId = ScriptId
 
 local function IsCurrent() return _G.VuxLethalId == ScriptId end
-
-
 
 -- Runtime values (set by LoadConfig)
 
@@ -3074,8 +2806,6 @@ local IsExecuting   = false
 local IsNoclipping  = false
 
 local ConfirmTime   = 0
-
-
 
 local DoJump           = false
 
@@ -3103,8 +2833,6 @@ local ExecMode         = 'flick'
 
 local JumpValue        = 55
 
-
-
 -- Configs — each has a PingMs field (milliseconds of extra delay before dash)
 
 local Configs = {
@@ -3123,8 +2851,6 @@ local Configs = {
 
 }
 
-
-
 -- Keep each tech's ping across closing/reopening the Chill Tech panel
 
 _G.ChillTechPings = _G.ChillTechPings or {}
@@ -3136,8 +2862,6 @@ for _,C in ipairs(Configs) do
     if type(saved)=="number" then C.PingMs=math.clamp(math.floor(saved),0,2000) end
 
 end
-
-
 
 local function FireDash()
 
@@ -3235,8 +2959,6 @@ local function LockOnToTarget(Root,Torso,PrecPct)
 
 end
 
-
-
 -- MeowTech execution: dash onto the nearest target and stay stuck to them
 
 local function ExecuteMeow()
@@ -3293,8 +3015,6 @@ local function ExecuteMeow()
 
 end
 
-
-
 local function ExecuteDash()
 
     if not IsCurrent() or IsExecuting or not Enabled then return end
@@ -3307,8 +3027,6 @@ local function ExecuteDash()
 
     if not Root or not Humanoid then return end
 
-
-
     -- read the ping of the tech that is actually selected, at call time,
 
     -- so editing its box takes effect on the very next uppercut
@@ -3316,8 +3034,6 @@ local function ExecuteDash()
     local ActiveCfg=Configs[ActiveIdx]
 
     local Ping=math.clamp(tonumber(ActiveCfg and ActiveCfg.PingMs) or PingDelayMs or 0,0,2000)
-
-
 
     if ExecMode=='meow' then
 
@@ -3333,13 +3049,9 @@ local function ExecuteDash()
 
     end
 
-
-
     local Torso=GetTorsoTarget(); if not Torso then Clip(); return end
 
     IsExecuting=true
-
-
 
     -- base delay (0.38s) + optional ping compensation
 
@@ -3348,8 +3060,6 @@ local function ExecuteDash()
     if not IsCurrent() then IsExecuting=false; return end
 
     if not Torso.Parent then IsExecuting=false; Clip(); return end
-
-
 
     if ExecMode=='v1' then
 
@@ -3387,8 +3097,6 @@ local function ExecuteDash()
 
         end)
 
-
-
     elseif ExecMode=='v2' then
 
         Root.AssemblyLinearVelocity=Vector3.new(Root.AssemblyLinearVelocity.X,JumpValue,Root.AssemblyLinearVelocity.Z)
@@ -3414,8 +3122,6 @@ local function ExecuteDash()
             if not Enabled or Elapsed>1.5 then Clip(); IsExecuting=false; if Conn then Conn:Disconnect() end; return end
 
         end)
-
-
 
     else -- flick mode
 
@@ -3487,8 +3193,6 @@ local function ExecuteDash()
 
 end
 
-
-
 RunService.PreSimulation:Connect(function()
 
     if not IsCurrent() or not IsNoclipping then return end
@@ -3506,8 +3210,6 @@ RunService.PreSimulation:Connect(function()
     end
 
 end)
-
-
 
 -- ===================== GUI =====================
 
@@ -3533,8 +3235,6 @@ local CloseBtn=MakeHeaderBtn('-',0.50); CloseBtn.BackgroundColor3=Color3.fromRGB
 
 local GearBtn=MakeHeaderBtn('⚙',0.62); local CfgBtn=MakeHeaderBtn('📋',0.74); local ThemeBtn=MakeHeaderBtn('🎨',0.86)
 
-
-
 local function MakePanel(h,canvas)
 
     local F=Instance.new('ScrollingFrame',MainFrame); F.BackgroundColor3=Color3.fromRGB(30,14,6); F.Size=UDim2.new(1,0,0,h); F.Position=UDim2.new(0,0,1,8); F.Visible=false; F.CanvasSize=UDim2.new(0,0,0,canvas); F.ScrollBarThickness=3
@@ -3551,19 +3251,13 @@ local AllPanels={SettingsPanel,ConfigPanel,ThemePanel}
 
 local function TogglePanel(p) for _,panel in pairs(AllPanels) do panel.Visible=(panel==p) and not p.Visible end end
 
-
-
 -- settings panel
 
 local StatusBtn=Instance.new('TextButton',SettingsPanel); StatusBtn.Size=UDim2.new(0.92,0,0,26); StatusBtn.Text='Status: ON'; StatusBtn.BackgroundColor3=Color3.fromRGB(255,120,0); StatusBtn.TextColor3=Color3.fromRGB(255,255,255); StatusBtn.Font=Enum.Font.GothamBold; StatusBtn.TextSize=12; Instance.new('UICorner',StatusBtn).CornerRadius=UDim.new(0,5)
 
 StatusBtn.MouseButton1Click:Connect(function() Enabled=not Enabled; StatusBtn.Text=Enabled and 'Status: ON' or 'Status: OFF'; StatusBtn.BackgroundColor3=Enabled and Color3.fromRGB(255,120,0) or Color3.fromRGB(200,50,50) end)
 
-
-
 local settingsNote=Instance.new('TextLabel',SettingsPanel); settingsNote.Size=UDim2.new(0.92,0,0,30); settingsNote.BackgroundTransparency=1; settingsNote.TextWrapped=true; settingsNote.TextColor3=Color3.fromRGB(180,130,80); settingsNote.Font=Enum.Font.Gotham; settingsNote.TextSize=9; settingsNote.Text='Per-config ping is in the 📋 panel next to each tech.'
-
-
 
 -- config panel
 
@@ -3591,8 +3285,6 @@ local ConfigDescs={
 
 local ConfigBtns={}; local PingBoxes={}
 
-
-
 local function LoadConfig(idx)
 
     local C=Configs[idx]; if not C then return end
@@ -3612,8 +3304,6 @@ local function LoadConfig(idx)
     for i,B in pairs(ConfigBtns) do B.BackgroundColor3=(i==idx) and Color3.fromRGB(200,100,0) or Color3.fromRGB(90,45,20) end
 
 end
-
-
 
 for i,C in ipairs(Configs) do
 
@@ -3665,8 +3355,6 @@ end
 
 LoadConfig(1)
 
-
-
 -- theme panel
 
 local Themes={{Name='Halloween',C=Color3.fromRGB(200,80,0)},{Name='Crimson',C=Color3.fromRGB(180,20,20)},{Name='Cyber',C=Color3.fromRGB(20,40,160)},{Name='Neon',C=Color3.fromRGB(40,180,40)},{Name='Purple',C=Color3.fromRGB(120,30,160)}}
@@ -3678,8 +3366,6 @@ for _,th in ipairs(Themes) do
     tBtn.MouseButton1Click:Connect(function() MainFrame.BackgroundColor3=th.C; MG.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,th.C),ColorSequenceKeypoint.new(1,th.C:Lerp(Color3.new(0,0,0),0.3))}) end)
 
 end
-
-
 
 GearBtn.MouseButton1Click:Connect(function() TogglePanel(SettingsPanel) end)
 
@@ -3694,8 +3380,6 @@ CloseBtn.MouseButton1Click:Connect(function()
     ConfirmTime=tick(); game:GetService('StarterGui'):SetCore('SendNotification',{Text='Click - again to close Chill Tech',Title='Confirm',Duration=5})
 
 end)
-
-
 
 local DASH_ANIMS = { ['rbxassetid://10503381238']=true, ['rbxassetid://13379003796']=true }
 
@@ -3723,8 +3407,6 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
 
 ]=====]
 
-
-
     ExternalBox:AddButton({ Text="Open Chill Tech Hub", Func=function()
 
         local ok,err=pcall(function()
@@ -3751,8 +3433,6 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
 
     end)
 
-
-
     -- ============================================================
 
     -- LETHAL DASH  (all settings now actually work)
@@ -3760,8 +3440,6 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
     -- ============================================================
 
     local LethalBox = addGroup(MacrosTab, "Left", "Lethal Dash", "zap")
-
-
 
     -- Using a plain table so every callback just writes into it
 
@@ -3785,8 +3463,6 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
 
     }
 
-
-
     LethalBox:AddToggle("LethalDash_Enabled",     { Text="Lethal Dash",        Default=false })
 
     LethalBox:AddInput("LethalDash_SnapDuration",{ Text="Snap Duration (cs)", Default="38", Numeric=true, Finished=false, Placeholder="5-120", Callback=function(v) LD.SNAP_DURATION=(tonumber(v) or 38)/100 end })
@@ -3794,8 +3470,6 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
     LethalBox:AddInput("LethalDash_PingDelay",   { Text="Ping Delay (ms)", Default="0", Numeric=true, Finished=false, Placeholder="0-400", Callback=function(v) LD.PING_MS=tonumber(v) or 0 end })
 
     LethalBox:AddToggle("LethalDash_CamSmooth",   { Text="Camera Smooth",     Default=false })
-
-
 
     local lethalCam    = workspace.CurrentCamera
 
@@ -3813,8 +3487,6 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
 
     local lethalBusy   = false
 
-
-
     connect(RunService.RenderStepped,function()
 
         if not Toggles.LethalDash_Enabled.Value or not lethalSmooth or not Toggles.LethalDash_CamSmooth.Value then return end
@@ -3824,8 +3496,6 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
         lethalCam.CFrame=lethalLastCF
 
     end)
-
-
 
     local function lethalGetTorso()
 
@@ -3857,8 +3527,6 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
 
     end
 
-
-
     local function lethalSetup(char)
 
         lethalChar=char; lethalHum=char:WaitForChild("Humanoid"); lethalHRP=char:WaitForChild("HumanoidRootPart"); lethalBusy=false
@@ -3877,11 +3545,7 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
 
             task.delay(2,function() lethalSmooth=false end)
 
-
-
             task.wait(LD.WAIT_TIME + LD.PING_MS/1000)
-
-
 
             if not Toggles.LethalDash_Enabled.Value then lethalBusy=false; return end
 
@@ -3892,8 +3556,6 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
             lethalHRP.AssemblyLinearVelocity=Vector3.new(vel.X, LD.VELO_POWER, vel.Z)
 
             lethalChar:WaitForChild("Communicate"):FireServer({Dash=Enum.KeyCode.W,Key=Enum.KeyCode.Q,Goal="KeyPress"})
-
-
 
             local target=lethalGetTorso()
 
@@ -3943,13 +3605,9 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
 
     end
 
-
-
     if LocalPlayer.Character then lethalSetup(LocalPlayer.Character) end
 
     connect(LocalPlayer.CharacterAdded, lethalSetup)
-
-
 
     -- ============================================================
 
@@ -3960,8 +3618,6 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
     local TechBox = addGroup(MacrosTab, "Right", "Tech Macros", "keyboard")
 
     TechBox:AddLabel({ Text="Keybinds for these are in the Home tab.", DoesWrap=true })
-
-
 
     local function addMacro(id, label, fn)
 
@@ -3994,8 +3650,6 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
         end)
 
     end
-
-
 
     -- Backdash 1–4
 
@@ -4035,8 +3689,6 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
 
     end
 
-
-
     -- ============================================================
 
     -- MOVE LOCK-ON
@@ -4054,8 +3706,6 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
     MoveLockBox:AddInput("MoveLock_Range",  { Text="Lock Range (st)", Default="120", Numeric=true, Finished=false, Placeholder="10-300" })
 
     MoveLockBox:AddInput("MoveLock_Smooth", { Text="Camera Smoothing (%)", Default="60", Numeric=true, Finished=false, Placeholder="1-100" })
-
-
 
     -- MOVE LIST — sorted by character
 
@@ -4121,8 +3771,6 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
 
     }
 
-
-
     -- Multi-select: any number of moves can lock, and each move has its own
 
     -- entry in the prediction set (so prediction is per move, not global).
@@ -4143,8 +3791,6 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
 
     end
 
-
-
     local function moveSetContains(optionName, label)
 
         local opt = Options[optionName]
@@ -4157,8 +3803,6 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
 
     end
 
-
-
     MoveLockBox:AddToggle("MoveLock_Enabled", { Text="Move Lock-On", Default=false })
 
     MoveLockBox:AddDropdown("MoveLock_Moves", { Values=moveNames, Multi=true, Text="Lock-On Moves" })
@@ -4169,8 +3813,6 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
 
     MoveLockBox:AddLabel({ Text="Pick as many lock-on moves as you want. Aim Prediction leads moving targets; leave the Aim Prediction list empty to predict every locked move. Bracket color follows the Combat tab Lock-On color.", DoesWrap=true })
 
-
-
     -- bracket color always from lock-on settings
 
     local function getBracketColor()
@@ -4178,8 +3820,6 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
         return (Options.LockOn_BracketColor and Options.LockOn_BracketColor.Value) or Color3.fromRGB(255,255,255)
 
     end
-
-
 
     local activeBracket = nil
 
@@ -4221,8 +3861,6 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
 
     end
 
-
-
     -- find nearest alive torso within range
 
     local function moveLockFindTarget()
@@ -4258,8 +3896,6 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
         return best
 
     end
-
-
 
     -- aim prediction: lead the target along the direction they are moving
 
@@ -4305,8 +3941,6 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
 
     end
 
-
-
     -- core lock loop for a single track
 
     local function moveLockForTrack(track, moveEntry)
@@ -4319,15 +3953,11 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
 
         if not target then return end
 
-
-
         showMoveBracket(target)
 
         local cam = workspace.CurrentCamera
 
         local conn
-
-
 
         conn = RunService.RenderStepped:Connect(function(dt)
 
@@ -4344,8 +3974,6 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
             local myRoot=getRoot(); local myHum=getHumanoid()
 
             if not myRoot or not cam then conn:Disconnect(); removeMoveBracket(); return end
-
-
 
             -- prediction is per move, but an empty Aim Prediction list means
 
@@ -4369,15 +3997,11 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
 
             if not pos then conn:Disconnect(); removeMoveBracket(); return end
 
-
-
             local snapPower=(tonumber(Options.MoveLock_Smooth.Value) or 60)/100
 
             local lookPos=Vector3.new(pos.X, pos.Y+0.5, pos.Z)
 
             cam.CFrame=cam.CFrame:Lerp(CFrame.lookAt(cam.CFrame.Position,lookPos), math.clamp(dt*(snapPower*20),0.04,1))
-
-
 
             if myHum and not isRagdolled(myHum) then
 
@@ -4390,8 +4014,6 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
                 end
 
             end
-
-
 
             -- sync bracket color live
 
@@ -4411,13 +4033,9 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
 
         end)
 
-
-
         track.Ended:Once(function() pcall(function() conn:Disconnect() end); removeMoveBracket() end)
 
     end
-
-
 
     -- hook animator
 
@@ -4457,15 +4075,11 @@ LocalPlayer.CharacterAdded:Connect(SetupCharacter)
 
     end
 
-
-
     if LocalPlayer.Character then task.spawn(setupMoveLockChar, LocalPlayer.Character) end
 
     connect(LocalPlayer.CharacterAdded, function(char) task.spawn(setupMoveLockChar, char) end)
 
 end
-
-
 
 ------------------------------------------------------------
 
@@ -4489,8 +4103,6 @@ do
 
     end)
 
-
-
     local JumpBox = addGroup(PlayerTab,"Left","Jump","arrow-up")
 
     JumpBox:AddToggle("Universal_Jump_Enabled",{ Text="Jump Power Hack", Default=false })
@@ -4506,8 +4118,6 @@ do
         if not h.UseJumpPower then h.UseJumpPower=true end; h.JumpPower=tonumber(Options.Universal_Jump_Value.Value) or 50
 
     end)
-
-
 
     local NoclipBox = addGroup(PlayerTab,"Left","Noclip","ghost")
 
@@ -4530,8 +4140,6 @@ do
         noclipPrune+=dt; if noclipPrune>5 then noclipPrune=0; for p in noclipParts do if not p.Parent then noclipParts[p]=nil end end end
 
     end)
-
-
 
     -- V3 Update 9: Invisibility (local visual only)
    local InvisBox=addGroup(PlayerTab,"Right","Invisibility","eye-off")
@@ -4614,8 +4222,6 @@ do
 
     onCleanup(stopFlying)
 
-
-
     local ExtraBox = addGroup(PlayerTab,"Right","Extra","settings")
 
     ExtraBox:AddToggle("Universal_InfJump",{ Text="Infinite Jump", Default=false })
@@ -4636,8 +4242,6 @@ do
 
     onCleanup(function() workspace.Gravity=defGrav end)
 
-
-
     local TeleportBox = addGroup(PlayerTab,"Left","Teleport","map-pin")
 
     TeleportBox:AddDropdown("Teleport_Target",{ SpecialType="Player", ExcludeLocalPlayer=true, Text="Teleport Target" })
@@ -4653,8 +4257,6 @@ do
         myRoot.CFrame=tRoot.CFrame+Vector3.new(0,3,0); Library:Notify("Teleported to "..playerLabel(target),3)
 
     end })
-
-
 
     local AttachBox = addGroup(PlayerTab,"Left","Attach To Player","link")
 
@@ -4728,8 +4330,6 @@ do
 
     end)
 
-
-
     local SpecBox = addGroup(PlayerTab,"Right","Spectate","video")
 
     local spectating=false; local spectateOverride=nil; local spectateYaw=0; local spectatePitch=math.rad(-12); local spectateDistance=12; local savedCamType=nil; local lastFocus=nil
@@ -4800,8 +4400,6 @@ do
 
     onCleanup(stopSpectate)
 
-
-
     -- Named Saved Positions (dropdown-based, no number nonsense)
 
     local PosBox = addGroup(PlayerTab,"Right","Named Saved Positions","map-pin")
@@ -4811,8 +4409,6 @@ do
     PosBox:AddInput("Pos_NameInput",{ Text="Position Name", Default="", Numeric=false, Finished=false, Placeholder='e.g. "Base"' })
 
     PosBox:AddDropdown("Pos_ListDropdown",{ Values={"(none)"}, Default=1, Text="Saved Positions" })
-
-
 
     local function refreshPosDropdown()
 
@@ -4825,8 +4421,6 @@ do
         Options.Pos_ListDropdown:SetValues(keys); Options.Pos_ListDropdown:SetValue(keys[1])
 
     end
-
-
 
     PosBox:AddButton({ Text="💾 Save Position", Func=function()
 
@@ -4871,8 +4465,6 @@ do
     end })
 
 end
-
-
 
 ------------------------------------------------------------
 
@@ -5066,8 +4658,6 @@ do
 
     onCleanup(closeDino)
 
-
-
     local FunBox=addGroup(FunTab,"Right","Character Fun","smile")
 
     FunBox:AddToggle("Fun_Spin",     { Text="Spin",       Default=false, Callback=function(v) setAutoRotateLock("spin",v) end })
@@ -5083,8 +4673,6 @@ do
     end)
 
     onCleanup(function() setAutoRotateLock("spin",false) end)
-
-
 
     local rainbowOrig={}
 
@@ -5153,8 +4741,6 @@ do
     onCleanup(removeTrail)
 
     FunBox:AddButton({ Text="Sit", Func=function() local h=getHumanoid(); if h then h.Sit=true end end })
-
-
 
     local WorldFunBox=addGroup(FunTab,"Left","World Fun","sparkles")
 
@@ -5498,8 +5084,6 @@ do
 
 end
 
-
-
 ------------------------------------------------------------
 
 -- LOADER TAB
@@ -5519,8 +5103,6 @@ do
     ExternalBox:AddButton({ Text="SimpleSpy",      Func=function() loadExternal("SimpleSpy",     "https://raw.githubusercontent.com/exxtremestuffs/SimpleSpySource/master/SimpleSpy.lua") end })
 
 end
-
-
 
 ------------------------------------------------------------
 
@@ -5570,31 +5152,12 @@ do
 
     end })
 
-
-
     local ThemeBox=addGroup(QoLTab,"Left","Theme","palette")
 
-    local themeNames={"Default","BBot","Fatality","Jester","Mint","Tokyo Night","Ubuntu","Quartz"}
-
-    if okTheme and ThemeManager and type(ThemeManager.BuiltInThemes)=="table" then
-
-        local sorted={}; for name,data in pairs(ThemeManager.BuiltInThemes) do table.insert(sorted,{name=name,order=(type(data)=="table" and tonumber(data[1])) or 0}) end
-
-        if #sorted>0 then table.sort(sorted,function(a,b) return a.order<b.order end); themeNames={}; for _,e in sorted do table.insert(themeNames,e.name) end end
-
-    end
-
-    ThemeBox:AddDropdown("QoL_Theme",{ Values=themeNames, Default=6, Text="Theme", Callback=function(name)
-
+    ThemeBox:AddDropdown("QoL_Theme",{ Values=Library.Themes, Default=Library.ThemeName, Text="Theme", Callback=function(name)
         if not themeUiReady then return end
-
-        if not(okTheme and ThemeManager) then Library:Notify("ThemeManager failed",4); return end
-
-        local list=Options.ThemeManager_ThemeList; if list and list.Value~=name then list:SetValue(name) else pcall(function() ThemeManager:ApplyTheme(name) end) end
-
+        Library:SetTheme(name)
     end })
-
-
 
     local CleanBox=addGroup(QoLTab,"Right","Visual Cleanup","sun")
 
@@ -5613,8 +5176,6 @@ do
     CleanBox:AddToggle("QoL_HidePlayerList",{ Text="Hide Player List", Default=false, Callback=function(on) pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList,not on) end) end })
 
     onCleanup(function() pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat,true); StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList,true) end) end)
-
-
 
     local ServerBox=addGroup(QoLTab,"Right","Server Tools","server")
 
@@ -5643,8 +5204,6 @@ do
     task.spawn(function() local mp=game:GetService("MarketplaceService"); local ok,info=pcall(function() return mp:GetProductInfoAsync(game.PlaceId) end); if ok and info then gameLabel:SetText("Game: "..tostring(info.Name)) else gameLabel:SetText("Game: unknown") end end)
 
 end
-
-
 
 ------------------------------------------------------------
 
@@ -5701,8 +5260,6 @@ do
 
     pcall(function() MenuGroup:AddDropdown("DPIDropdown",{ Values={"50%","75%","100%","125%","150%","175%","200%"}, Default="100%", Text="DPI Scale", Callback=function(v) local dpi=tonumber((v:gsub("%%",""))); if dpi then Library:SetDPIScale(dpi) end end }) end)
 
-
-
     Library:OnUnload(function()
 
         unloaded=true
@@ -5713,21 +5270,23 @@ do
 
     end)
 
+    -- Chillui has built-in appearance controls and a config system, so the
+    -- Obsidian ThemeManager / SaveManager sections are replaced with these.
+    local AppearanceBox=addGroup(SettingsTab,"Left","Appearance","palette")
+    AppearanceBox:AddDropdown("CH_Theme",{Values=Library.Themes,Default=Library.ThemeName,Text="Theme",Callback=function(v) Library:SetTheme(v) end})
+    AppearanceBox:AddDropdown("CH_Font",{Values=Library.Fonts,Default=Library.FontName,Text="Font",Callback=function(v) Library:SetFont(v) end})
+    AppearanceBox:AddColorPicker("CH_Accent",{Default=Color3.fromRGB(255,100,0),Title="Accent color",Callback=function(v) Library:SetAccent(v) end})
+    AppearanceBox:AddSlider("CH_Radius",{Text="Corner radius",Min=0,Max=24,Default=Library.CornerRadius,Rounding=0,Callback=function(v) Library:SetCornerRadius(v) end})
+    if Library.Mode~="Lite" then
+        AppearanceBox:AddDropdown("CH_Backdrop",{Values=Library.Backdrops,Default=Library.BackdropName,Text="Backdrop",Callback=function(v) Library:SetBackdrop(v) end})
+    end
 
-
-    if okTheme and ThemeManager then ThemeManager:SetLibrary(Library); ThemeManager:SetFolder("ChillhubTSB"); ThemeManager:ApplyToTab(SettingsTab)
-
-    else warn("[Chillhub] ThemeManager failed:",ThemeManager) end
-
-    if okSave and SaveManager then
-
-        SaveManager:SetLibrary(Library); if okTheme then SaveManager:IgnoreThemeSettings() end
-
-        SaveManager:SetIgnoreIndexes({"MenuKeybind","QoL_Theme"}); SaveManager:SetFolder("ChillhubTSB"); SaveManager:BuildConfigSection(SettingsTab); SaveManager:LoadAutoloadConfig()
-
-    else warn("[Chillhub] SaveManager failed:",SaveManager) end
-
-
+    local ConfigBox=addGroup(SettingsTab,"Left","Configs","folder")
+    local cfgName=ConfigBox:AddInput("CH_ConfigName",{Text="Config name",Default="default",Placeholder="my-config"})
+    local cfgList=ConfigBox:AddDropdown("CH_ConfigList",{Values=Library:ListConfigs(),Default=1,Text="Saved configs"})
+    ConfigBox:AddButton({Text="Save config",Func=function() Library:SaveConfig(cfgName.Value);cfgList:SetValues(Library:ListConfigs()) end})
+    ConfigBox:AddButton({Text="Load config",Func=function() local c=cfgList.Value;if c and c~="" then Library:LoadConfig(c) end end})
+    ConfigBox:AddButton({Text="Delete config",Func=function() local c=cfgList.Value;if c and c~="" then Library:DeleteConfig(c) end;cfgList:SetValues(Library:ListConfigs()) end})
 
 themeUiReady=true
 
@@ -5735,22 +5294,16 @@ end -- Settings tab setup
 
 end -- buildUI
 
-
-
 local okBuild,buildErr=xpcall(buildUI,function(e) return tostring(e).."\n"..debug.traceback() end)
 
 if not okBuild then
 
     warn("[Chillhub] UI build failed:",buildErr)
 
-    pcall(function() Loading:ShowErrorPage(true); Loading:SetErrorMessage("Failed to build the UI, check the console (F9) for details.") end)
+    pcall(function() Library:Notify("Chillhub v9 failed to build. Check the console (F9).",6) end)
 
     return
 
 end
-
-
-
-pcall(function() Loading:SetCurrentStep(4); Loading:Continue() end)
 
 Library:Notify("Chillhub v9 loaded 🎃",6)
