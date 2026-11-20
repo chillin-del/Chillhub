@@ -2,6 +2,7 @@
 -- Chillhub Simple Edition
 -- Game: Die of Death
 -- Tabs: Home, Visuals, QoL, Fun, Game, Anti, Settings
+-- Ported to Chillui (Obsidian addons removed)
 ------------------------------------------------------------
 
 ------------------------------------------------------------
@@ -21,14 +22,18 @@ local LocalPlayer = Players.LocalPlayer
 ------------------------------------------------------------
 -- LOAD UI LIBRARY
 ------------------------------------------------------------
-local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
-
-local Library      = loadstring(game:HttpGet(repo .. "Library.lua"))()
-local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
-local SaveManager  = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
+-- The UI library lives on GitHub as "ChillHubUI.lua" (a copy of Chillui.lua).
+-- Chillui shows its own Normal / Lite splash when the window is created, so
+-- there is no separate loading screen to drive here.
+local repo = "https://raw.githubusercontent.com/chillin-del/Chillhub/main/"
+local okLib, Library = pcall(function() return loadstring(game:HttpGet(repo.."ChillHubUI.lua"))() end)
+if not okLib or not Library then error("[ChillHub Simple] failed to load UI library: "..tostring(Library)) end
 
 local Options = Library.Options
 local Toggles = Library.Toggles
+
+-- Chillui has theming, fonts, backdrops and configs built in, so the Obsidian
+-- ThemeManager / SaveManager addons are not loaded.
 
 if getgenv().ChillhubSimple_Unload then
     pcall(getgenv().ChillhubSimple_Unload)
@@ -48,38 +53,8 @@ do
 end
 
 ------------------------------------------------------------
--- LOADING SCREEN
-------------------------------------------------------------
-local LOGO_ASSET_ID = "rbxassetid://83288538700579"
-local UPDATE_VERSION = "9"
-
-local Loading = Library:CreateLoading({
-    Title      = "Chillhub",
-    Icon       = LOGO_ASSET_ID,
-    TotalSteps = 4,
-})
-
--- safety net: never leave the loading screen up forever
-task.delay(90, function() pcall(function() Loading:Destroy() end) end)
-
-Loading:SetMessage("Loading Chillhub")
-Loading:SetDescription("i love you")
-task.wait(1.5)
-
-Loading:SetCurrentStep(1)
-Loading:SetDescription("Loading ya save fileeee")
-task.wait(1.5)
-
-Loading:SetCurrentStep(2)
-Loading:ShowSidebarPage(true)
-Loading.Sidebar:AddLabel("User: " .. LocalPlayer.Name)
-Loading.Sidebar:AddLabel("Update " .. UPDATE_VERSION)
-task.wait(1.5)
-
-Loading:SetCurrentStep(3)
-Loading:SetDescription("Ready!")
-task.wait(1.5)
-
+-- Chillui shows its own Normal / Lite splash when the window is
+-- created, so there is no separate loading screen to drive here.
 ------------------------------------------------------------
 -- HELPERS
 ------------------------------------------------------------
@@ -567,12 +542,14 @@ end
 -- CREATE WINDOW
 ------------------------------------------------------------
 local Window = Library:CreateWindow({
-    Title         = "Chillhub",
-    Footer        = "Simple Edition",
-    ToggleKeybind = Enum.KeyCode.P,
-    Center        = true,
-    AutoShow      = true,
+    Title      = "Chillhub",
+    Footer     = "Simple Edition",
+    NotifySide = "Right",
 })
+-- Chillui accent + a dark built-in theme (replaces the Obsidian ThemeManager call).
+Library.Config.MenuKey = "P"
+pcall(function() Library:SetTheme("Midnight") end)
+pcall(function() Library:SetAccent(Color3.fromRGB(255,100,0)) end)
 
 ------------------------------------------------------------
 -- TABS
@@ -1405,11 +1382,11 @@ do
 
     local ThemeBox = QoLTab:AddRightGroupbox("Theme")
     ThemeBox:AddDropdown("QoL_Theme", {
-        Values = { "Default", "BBot", "Fatality", "Jester", "Mint", "Tokyo Night", "Ubuntu", "Quartz" },
-        Default = 6,
+        Values = Library.Themes,
+        Default = Library.ThemeName,
         Text = "UI Theme",
         Callback = function(name)
-            pcall(function() ThemeManager:ApplyTheme(name) end)
+            Library:SetTheme(name)
         end
     })
 end
@@ -1894,22 +1871,24 @@ do
         if espGui then pcall(function() espGui:Destroy() end) end
     end)
 
-    ThemeManager:SetLibrary(Library)
-    ThemeManager:SetFolder("ChillhubSimple")
-    ThemeManager:ApplyTheme("Tokyo Night")
-    ThemeManager:ApplyToTab(SettingsTab)
+    -- Chillui has built-in appearance controls and a config system, so the
+    -- Obsidian ThemeManager / SaveManager sections are replaced with these.
+    local AppearanceBox = SettingsTab:AddLeftGroupbox("Appearance")
+    AppearanceBox:AddDropdown("CH_Theme",{Values=Library.Themes,Default=Library.ThemeName,Text="Theme",Callback=function(v) Library:SetTheme(v) end})
+    AppearanceBox:AddDropdown("CH_Font",{Values=Library.Fonts,Default=Library.FontName,Text="Font",Callback=function(v) Library:SetFont(v) end})
+    AppearanceBox:AddColorPicker("CH_Accent",{Default=Color3.fromRGB(255,100,0),Title="Accent color",Callback=function(v) Library:SetAccent(v) end})
+    AppearanceBox:AddSlider("CH_Radius",{Text="Corner radius",Min=0,Max=24,Default=Library.CornerRadius,Rounding=0,Callback=function(v) Library:SetCornerRadius(v) end})
+    if Library.Mode ~= "Lite" then
+        AppearanceBox:AddDropdown("CH_Backdrop",{Values=Library.Backdrops,Default=Library.BackdropName,Text="Backdrop",Callback=function(v) Library:SetBackdrop(v) end})
+    end
 
-    SaveManager:SetLibrary(Library)
-    SaveManager:IgnoreThemeSettings()
-    SaveManager:SetFolder("ChillhubSimple")
-    SaveManager:BuildConfigSection(SettingsTab)
-    SaveManager:LoadAutoloadConfig()
+    local ConfigBox = SettingsTab:AddLeftGroupbox("Configs")
+    local cfgName = ConfigBox:AddInput("CH_ConfigName",{Text="Config name",Default="default",Placeholder="my-config"})
+    local cfgList = ConfigBox:AddDropdown("CH_ConfigList",{Values=Library:ListConfigs(),Default=1,Text="Saved configs"})
+    ConfigBox:AddButton({Text="Save config",Func=function() Library:SaveConfig(cfgName.Value);cfgList:SetValues(Library:ListConfigs()) end})
+    ConfigBox:AddButton({Text="Load config",Func=function() local c=cfgList.Value;if c and c~="" then Library:LoadConfig(c) end end})
+    ConfigBox:AddButton({Text="Delete config",Func=function() local c=cfgList.Value;if c and c~="" then Library:DeleteConfig(c) end;cfgList:SetValues(Library:ListConfigs()) end})
 end
-
-pcall(function()
-    Loading:SetCurrentStep(4)
-    Loading:Continue()
-end)
 
 Library:Notify("Chillhub loaded! Stamina + Survival ready", 5)
 
