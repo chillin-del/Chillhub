@@ -22,25 +22,18 @@ local LocalPlayer   = Players.LocalPlayer
 local LOGO_ASSET_ID = "rbxassetid://83288538700579"
 local ACCENT        = Color3.fromRGB(255, 100, 0)
 
-local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
-local okLib, Library = pcall(function() return loadstring(game:HttpGet(repo.."Library.lua"))() end)
+-- The UI library lives on GitHub as "ChillHubUI.lua" (a copy of Chillui.lua).
+-- Chillui shows its own Normal / Lite splash when the window is created, so
+-- there is no separate loading screen to drive here.
+local repo = "https://raw.githubusercontent.com/chillin-del/Chillhub/main/"
+local okLib, Library = pcall(function() return loadstring(game:HttpGet(repo.."ChillHubUI.lua"))() end)
 if not okLib or not Library then error("[ChillHub] failed to load UI library: "..tostring(Library)) end
-local okTheme, ThemeManager = pcall(function() return loadstring(game:HttpGet(repo.."addons/ThemeManager.lua"))() end)
-local okSave,  SaveManager  = pcall(function() return loadstring(game:HttpGet(repo.."addons/SaveManager.lua"))()  end)
 
 local Options = Library.Options
 local Toggles = Library.Toggles
 
-local Loading = Library:CreateLoading({ Title="ChillHub Universal", Icon=LOGO_ASSET_ID, TotalSteps=4 })
-task.delay(90, function() pcall(function() Loading:Destroy() end) end)
-Loading:SetMessage("Loading ChillHub Universal")
-Loading:SetDescription("works in any game :3"); task.wait(1.5)
-Loading:SetCurrentStep(1); Loading:SetDescription("loading features..."); task.wait(1.5)
-Loading:SetCurrentStep(2); Loading:ShowSidebarPage(true)
-Loading.Sidebar:AddLabel("User: "..LocalPlayer.Name)
-Loading.Sidebar:AddLabel("Update "..UPDATE_VERSION); task.wait(1.5)
-Loading:SetCurrentStep(3); Loading:SetDescription("Ready!"); task.wait(1.5)
-pcall(function() Library.AccentColor = Color3.fromRGB(255,100,0) end)
+-- Chillui has theming, fonts, backdrops and configs built in, so the Obsidian
+-- ThemeManager / SaveManager addons are not loaded.
 
 ------------------------------------------------------------
 -- HELPERS
@@ -84,13 +77,15 @@ local function playerLabel(plr)
     if plr.DisplayName~=plr.Name then return plr.DisplayName.." ("..plr.Name..")" end
     return plr.Name
 end
+-- Chillui's KeyPicker stores the bound key string in `.Key` (`.Value` holds the
+-- toggle state), so read `.Key` first for these keybinds.
 local function keyFromOption(name)
     local opt=Options[name]; if not opt then return nil end
-    return Enum.KeyCode:FromName(tostring(opt.Value))
+    return Enum.KeyCode:FromName(tostring(opt.Key or opt.Value))
 end
 local function inputMatchesBind(input,name)
     local opt=Options[name]; if not opt then return false end
-    local v=tostring(opt.Value)
+    local v=tostring(opt.Key or opt.Value)
     if v=="None" then return false end
     if v=="MB1" then return input.UserInputType==Enum.UserInputType.MouseButton1 end
     if v=="MB2" then return input.UserInputType==Enum.UserInputType.MouseButton2 end
@@ -199,11 +194,14 @@ local function buildUI()
 
 local Window=Library:CreateWindow({
     Title="ChillHub Universal 🎃",Footer="by ilovemygfhehe123",
-    ToggleKeybind=Enum.KeyCode.P,Center=true,AutoShow=true,Icon=LOGO_ASSET_ID,
+    NotifySide="Right",
 })
 local _menuLast=0
 Library.ToggleCallback=function() local now=os.clock(); if now-_menuLast<0.3 then return false end; _menuLast=now; return true end
-pcall(function() if okTheme and ThemeManager then ThemeManager:SetLibrary(Library); ThemeManager:ApplyTheme("Tokyo Night"); Library.AccentColor=Color3.fromRGB(255,100,0) end end)
+-- Chillui accent + a dark built-in theme (replaces the Obsidian ThemeManager call).
+Library.Config.MenuKey="P"
+pcall(function() Library:SetTheme("Midnight") end)
+pcall(function() Library:SetAccent(Color3.fromRGB(255,100,0)) end)
 
 local HomeTab     = Window:AddTab("Home",            "home")
 local VisualsTab  = Window:AddTab("Visuals",         "eye")
@@ -231,9 +229,9 @@ do
 
     local KeysBox=addGroup(HomeTab,"Right","Default Keybinds","keyboard")
     local function addKeybind(label,id,default)
-        KeysBox:AddLabel(label):AddKeyPicker(id,{Default=default,NoUI=true,Mode="Toggle",Text=label})
+        KeysBox:AddKeyPicker(id,{Default=default,NoUI=true,Mode="Toggle",Text=label})
     end
-    KeysBox:AddLabel("Open / Close Menu"):AddKeyPicker("MenuKeybind",{Default="P",NoUI=true,Text="Open / Close Menu"})
+    KeysBox:AddKeyPicker("MenuKeybind",{Default=Library.Config.MenuKey or "P",NoUI=true,Text="Open / Close Menu",ChangedCallback=function(key) Library.Config.MenuKey=key end})
     Library.ToggleKeybind=Options.MenuKeybind
     addKeybind("Fly Up",               "Keybind_FlyUp",     "Space")
     addKeybind("Fly Down",             "Keybind_FlyDown",   "LeftControl")
@@ -740,7 +738,7 @@ do
         if not Toggles.Aimbot_Enabled.Value then return false end
         if Toggles.Aimbot_AlwaysOn.Value then return true end
         local opt=Options.Aimbot_Key; if not opt then return UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) end
-        local val=tostring(opt.Value)
+        local val=tostring(opt.Key or opt.Value)
         if val=="None" then return true end
         if val=="MB2" then return UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) end
         if val=="MB1" then return UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) end
@@ -1416,15 +1414,9 @@ do
     end})
 
     local ThemeBox=addGroup(QoLTab,"Left","Theme","palette")
-    local themeNames={"Default","BBot","Fatality","Jester","Mint","Tokyo Night","Ubuntu","Quartz"}
-    if okTheme and ThemeManager and type(ThemeManager.BuiltInThemes)=="table" then
-        local sorted={}; for name,data in pairs(ThemeManager.BuiltInThemes) do table.insert(sorted,{name=name,order=(type(data)=="table" and tonumber(data[1])) or 0}) end
-        if #sorted>0 then table.sort(sorted,function(a,b) return a.order<b.order end);themeNames={};for _,e in sorted do table.insert(themeNames,e.name) end end
-    end
-    ThemeBox:AddDropdown("QoL_Theme",{Values=themeNames,Default=6,Text="Theme",Callback=function(name)
+    ThemeBox:AddDropdown("QoL_Theme",{Values=Library.Themes,Default=Library.ThemeName,Text="Theme",Callback=function(name)
         if not themeUiReady then return end
-        if not(okTheme and ThemeManager) then Library:Notify("ThemeManager failed",4);return end
-        local list=Options.ThemeManager_ThemeList;if list and list.Value~=name then list:SetValue(name) else pcall(function() ThemeManager:ApplyTheme(name) end) end
+        Library:SetTheme(name)
     end})
 
     local CleanBox=addGroup(QoLTab,"Right","Visual Cleanup","sun")
@@ -1485,12 +1477,23 @@ do
         for _,fn in cleanupFns do pcall(fn) end
     end)
 
-    if okTheme and ThemeManager then ThemeManager:SetLibrary(Library);ThemeManager:SetFolder("ChillhubUniversal");ThemeManager:ApplyToTab(SettingsTab)
-    else warn("[ChillHub Universal] ThemeManager failed:",ThemeManager) end
-    if okSave and SaveManager then
-        SaveManager:SetLibrary(Library);if okTheme then SaveManager:IgnoreThemeSettings() end
-        SaveManager:SetIgnoreIndexes({"MenuKeybind","QoL_Theme"});SaveManager:SetFolder("ChillhubUniversal");SaveManager:BuildConfigSection(SettingsTab);SaveManager:LoadAutoloadConfig()
-    else warn("[ChillHub Universal] SaveManager failed:",SaveManager) end
+    -- Chillui has built-in appearance controls and a config system, so the
+    -- Obsidian ThemeManager / SaveManager sections are replaced with these.
+    local AppearanceBox=addGroup(SettingsTab,"Left","Appearance","palette")
+    AppearanceBox:AddDropdown("CH_Theme",{Values=Library.Themes,Default=Library.ThemeName,Text="Theme",Callback=function(v) Library:SetTheme(v) end})
+    AppearanceBox:AddDropdown("CH_Font",{Values=Library.Fonts,Default=Library.FontName,Text="Font",Callback=function(v) Library:SetFont(v) end})
+    AppearanceBox:AddColorPicker("CH_Accent",{Default=Color3.fromRGB(255,100,0),Title="Accent color",Callback=function(v) Library:SetAccent(v) end})
+    AppearanceBox:AddSlider("CH_Radius",{Text="Corner radius",Min=0,Max=24,Default=Library.CornerRadius,Rounding=0,Callback=function(v) Library:SetCornerRadius(v) end})
+    if Library.Mode~="Lite" then
+        AppearanceBox:AddDropdown("CH_Backdrop",{Values=Library.Backdrops,Default=Library.BackdropName,Text="Backdrop",Callback=function(v) Library:SetBackdrop(v) end})
+    end
+
+    local ConfigBox=addGroup(SettingsTab,"Left","Configs","folder")
+    local cfgName=ConfigBox:AddInput("CH_ConfigName",{Text="Config name",Default="default",Placeholder="my-config"})
+    local cfgList=ConfigBox:AddDropdown("CH_ConfigList",{Values=Library:ListConfigs(),Default=1,Text="Saved configs"})
+    ConfigBox:AddButton({Text="Save config",Func=function() Library:SaveConfig(cfgName.Value);cfgList:SetValues(Library:ListConfigs()) end})
+    ConfigBox:AddButton({Text="Load config",Func=function() local c=cfgList.Value;if c and c~="" then Library:LoadConfig(c) end end})
+    ConfigBox:AddButton({Text="Delete config",Func=function() local c=cfgList.Value;if c and c~="" then Library:DeleteConfig(c) end;cfgList:SetValues(Library:ListConfigs()) end})
 
     themeUiReady=true
 end
@@ -1500,9 +1503,8 @@ end -- buildUI
 local okBuild,buildErr=xpcall(buildUI,function(e) return tostring(e).."\n"..debug.traceback() end)
 if not okBuild then
     warn("[ChillHub Universal] UI build failed:",buildErr)
-    pcall(function() Loading:ShowErrorPage(true);Loading:SetErrorMessage("Failed to build the UI, check the console (F9) for details.") end)
+    Library:Notify("ChillHub Universal failed to build. Check the console (F9).",6)
     return
 end
 
-pcall(function() Loading:SetCurrentStep(4);Loading:Continue() end)
 Library:Notify("ChillHub Universal v1 loaded 🎃",6)
