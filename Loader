@@ -8,7 +8,7 @@ local SCRIPT_HUB = {
     [9015014224] = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/Slap%20battles", -- Slap Battles
     [6403373529] = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/Slap%20battles", -- Slap Battles VC
     [11520107397] = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/Slap%20battles", -- Slap Battles Randomizer
-    [6447798030] = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/FNF", -- Funky Friday
+    [6447798030] = "", -- Funky Friday MATINENCE 
     [71895508397153] = "https://raw.githubusercontent.com/chillin-del/Chillhub/refs/heads/main/Die%20of%20death", -- Die of Death
 }
 
